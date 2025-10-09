@@ -1,0 +1,11 @@
+body {
+    font-family: sans-serif;
+    margin: 2em;
+}
+
+#transcript {
+    border: 1px solid #ccc;
+    padding: 1em;
+    height: 300px;
+    overflow-y: scroll;
+}

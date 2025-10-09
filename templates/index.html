@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Clipper</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <h1>Video Clipper</h1>
+    <form id="upload-form" action="/upload" method="post" enctype="multipart/form-data">
+        <input type="file" name="video" accept="video/*" required>
+        <button type="submit">Upload and Transcribe</button>
+    </form>
+    <hr>
+    <h2>Transcript</h2>
+    <div id="transcript">
+        <p>Your video transcript will appear here.</p>
+    </div>
+    <hr>
+    <h2>Create Clip</h2>
+    <form id="clip-form">
+        <label for="start">Start Time:</label>
+        <input type="text" id="start" name="start" placeholder="00:00:00">
+        <label for="end">End Time:</label>
+        <input type="text" id="end" name="end" placeholder="00:00:00">
+        <button type="submit">Create Clip</button>
+    </form>
+    <hr>
+    <h2>Clip Result</h2>
+    <div id="clip-result"></div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
