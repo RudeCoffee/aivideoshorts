@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -238,7 +239,12 @@ func transcribeVideo(videoPath string) ([]TranscriptSegment, error) {
 	defer os.Remove(audioPath)
 
 	// 2. Run whisper.cpp to transcribe the audio and output to a VTT file.
-	whisperCliPath := getEnv("WHISPER_CLI_PATH", "./whisper.cpp/build/bin/whisper-cli")
+	var whisperCliPath string
+	if runtime.GOOS == "windows" {
+		whisperCliPath = getEnv("WHISPER_CLI_PATH", "./whisper.cpp/build/bin/Release/whisper-cli.exe")
+	} else {
+		whisperCliPath = getEnv("WHISPER_CLI_PATH", "./whisper.cpp/build/bin/whisper-cli")
+	}
 	whisperModelPath := getEnv("WHISPER_MODEL_PATH", "./whisper.cpp/models/ggml-base.en.bin")
 	transcriptOutputPath := filepath.Join("uploads", "temp_transcript")
 
