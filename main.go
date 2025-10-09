@@ -241,11 +241,15 @@ func transcribeVideo(videoPath string) ([]TranscriptSegment, error) {
 	// 2. Run whisper.cpp to transcribe the audio and output to a VTT file.
 	var whisperCliPath string
 	if runtime.GOOS == "windows" {
-		whisperCliPath = getEnv("WHISPER_CLI_PATH", "./whisper.cpp/build/bin/Release/whisper-cli.exe")
+		defaultPath := filepath.Join(".", "whisper.cpp", "build", "bin", "Release", "whisper-cli.exe")
+		whisperCliPath = getEnv("WHISPER_CLI_PATH", defaultPath)
 	} else {
-		whisperCliPath = getEnv("WHISPER_CLI_PATH", "./whisper.cpp/build/bin/whisper-cli")
+		defaultPath := filepath.Join(".", "whisper.cpp", "build", "bin", "whisper-cli")
+		whisperCliPath = getEnv("WHISPER_CLI_PATH", defaultPath)
 	}
-	whisperModelPath := getEnv("WHISPER_MODEL_PATH", "./whisper.cpp/models/ggml-base.en.bin")
+
+	defaultModelPath := filepath.Join(".", "whisper.cpp", "models", "ggml-base.en.bin")
+	whisperModelPath := getEnv("WHISPER_MODEL_PATH", defaultModelPath)
 	transcriptOutputPath := filepath.Join("uploads", "temp_transcript")
 
 	// Prepare arguments for whisper-cli
