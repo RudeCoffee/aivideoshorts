@@ -248,13 +248,21 @@ func transcribeVideo(videoPath string) ([]TranscriptSegment, error) {
 	whisperModelPath := getEnv("WHISPER_MODEL_PATH", "./whisper.cpp/models/ggml-base.en.bin")
 	transcriptOutputPath := filepath.Join("uploads", "temp_transcript")
 
-	cmdWhisper := exec.Command(
-		whisperCliPath,
+	// Prepare arguments for whisper-cli
+	args := []string{
 		"-m", whisperModelPath,
 		"-f", audioPath,
 		"-ovtt", // Output in VTT format
 		"-of", transcriptOutputPath,
-	)
+	}
+
+	// Check for GPU layers environment variable to enable GPU acceleration
+	if gpuLayers, ok := os.LookupEnv("WHISPER_GPU_LAYERS"); ok {
+		args = append(args, "--n-gpu-layers", gpuLayers)
+		log.Printf("GPU acceleration enabled with %s layers.", gpuLayers)
+	}
+
+	cmdWhisper := exec.Command(whisperCliPath, args...)
 	cmdWhisper.Dir = "." // Run from the app's root directory
 
 	output, err = cmdWhisper.CombinedOutput()

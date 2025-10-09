@@ -73,3 +73,43 @@ $env:WHISPER_MODEL_PATH="C:\path\to\your\ggml-base.en.bin"
 export WHISPER_CLI_PATH="/path/to/your/whisper-cli"
 export WHISPER_MODEL_PATH="/path/to/your/ggml-base.en.bin"
 ```
+
+---
+
+## GPU Acceleration (NVIDIA)
+
+If you have an NVIDIA graphics card, you can significantly speed up the transcription process by compiling `whisper.cpp` with CUDA support and offloading the work to your GPU.
+
+### Prerequisites for GPU Acceleration
+
+-   **NVIDIA Drivers:** You must have the appropriate NVIDIA drivers installed for your GPU.
+-   **CUDA Toolkit:** You need to have the NVIDIA CUDA Toolkit installed.
+
+### 1. Compile with CUDA Support
+
+When you build `whisper.cpp`, use the following command to enable CUDA support:
+
+```bash
+# Inside the whisper.cpp directory
+make whisper-cli GGML_CUDA=1
+```
+
+This will create the `whisper-cli` executable with GPU capabilities.
+
+### 2. Run with GPU Acceleration
+
+To enable GPU acceleration, set the `WHISPER_GPU_LAYERS` environment variable before running the application. This variable tells `whisper.cpp` how many of the model's layers to offload to the GPU. A good starting point is a non-zero value; you can experiment to find the best performance for your card.
+
+**PowerShell (Windows):**
+```powershell
+# A value greater than 0 enables GPU offloading.
+$env:WHISPER_GPU_LAYERS="1"
+./video-clipper-app.exe
+```
+
+**Bash (Linux/macOS):**
+```bash
+# A value greater than 0 enables GPU offloading.
+export WHISPER_GPU_LAYERS=1
+./video-clipper-app
+```
