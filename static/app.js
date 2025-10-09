@@ -1,5 +1,6 @@
 document.addEventListener('DOMContentLoaded', () => {
     const uploadForm = document.getElementById('upload-form');
+    const uploadButton = uploadForm.querySelector('button');
     const transcriptDiv = document.getElementById('transcript');
     const clipForm = document.getElementById('clip-form');
     const clipResultDiv = document.getElementById('clip-result');
@@ -7,33 +8,49 @@ document.addEventListener('DOMContentLoaded', () => {
 
     uploadForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        transcriptDiv.innerHTML = '<p>Uploading and transcribing...</p>';
+
+        uploadButton.disabled = true;
+        uploadButton.textContent = 'Transcribing...';
+        transcriptDiv.innerHTML = '<p>Transcription in progress. This may take a few minutes for longer videos...</p>';
         clipResultDiv.innerHTML = '';
 
         const formData = new FormData(uploadForm);
-        const response = await fetch('/upload', {
-            method: 'POST',
-            body: formData,
-        });
 
-        if (response.ok) {
-            const data = await response.json();
-            videoFile = data.videoFile;
-            const transcript = data.transcript;
-            transcriptDiv.innerHTML = ''; // Clear previous transcript
-            transcript.forEach(segment => {
-                const p = document.createElement('p');
-                p.textContent = segment.text;
-                p.dataset.start = segment.start;
-                p.dataset.end = segment.end;
-                p.addEventListener('click', () => {
-                    document.getElementById('start').value = segment.start;
-                    document.getElementById('end').value = segment.end;
-                });
-                transcriptDiv.appendChild(p);
+        try {
+            const response = await fetch('/upload', {
+                method: 'POST',
+                body: formData,
             });
-        } else {
-            transcriptDiv.innerHTML = `<p>Error uploading and transcribing file.</p>`;
+
+            if (response.ok) {
+                const data = await response.json();
+                videoFile = data.videoFile;
+                const transcript = data.transcript;
+                transcriptDiv.innerHTML = ''; // Clear previous transcript
+                if (transcript && transcript.length > 0) {
+                    transcript.forEach(segment => {
+                        const p = document.createElement('p');
+                        p.textContent = segment.text;
+                        p.dataset.start = segment.start;
+                        p.dataset.end = segment.end;
+                        p.addEventListener('click', () => {
+                            document.getElementById('start').value = segment.start;
+                            document.getElementById('end').value = segment.end;
+                        });
+                        transcriptDiv.appendChild(p);
+                    });
+                } else {
+                    transcriptDiv.innerHTML = '<p>No speech detected in the video, or the transcript was empty.</p>';
+                }
+            } else {
+                const errorText = await response.text();
+                transcriptDiv.innerHTML = `<p><strong>Error during transcription:</strong> ${errorText}</p>`;
+            }
+        } catch (error) {
+            transcriptDiv.innerHTML = `<p><strong>An unexpected error occurred:</strong> ${error.message}</p>`;
+        } finally {
+            uploadButton.disabled = false;
+            uploadButton.textContent = 'Upload and Transcribe';
         }
     });
 
@@ -60,7 +77,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 <a href="${clipPath}" download>Download Clip</a>
             `;
         } else {
-            clipResultDiv.innerHTML = `<p>Error creating clip.</p>`;
+            const errorText = await response.text();
+            clipResultDiv.innerHTML = `<p><strong>Error creating clip:</strong> ${errorText}</p>`;
         }
     });
 });

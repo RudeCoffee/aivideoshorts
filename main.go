@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 )
 
 // TranscriptSegment represents a single segment of the video transcript.
@@ -135,14 +138,135 @@ func clipHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "/static/%s", clipFile)
 }
 
-func transcribeVideo(videoPath string) ([]TranscriptSegment, error) {
-	// In a real application, you would use a transcription service.
-	// For this example, we'll return a dummy transcript.
-	log.Printf("Transcribing video: %s", videoPath)
-	transcript := []TranscriptSegment{
-		{Start: 0.5, End: 2.0, Text: "This is the first sentence."},
-		{Start: 2.5, End: 5.0, Text: "This is the second sentence, which is a bit longer."},
-		{Start: 5.5, End: 8.0, Text: "And here is a third and final sentence."},
+func parseVTTTimestamp(ts string) (float64, error) {
+	// 00:00:00.000 or 00:00.000 format
+	ts = strings.Replace(ts, ",", ".", 1)
+	parts := strings.Split(ts, ":")
+	var hours, minutes, seconds float64
+	var err error
+
+	if len(parts) == 3 {
+		hours, err = strconv.ParseFloat(parts[0], 64)
+		if err != nil {
+			return 0, err
+		}
+		minutes, err = strconv.ParseFloat(parts[1], 64)
+		if err != nil {
+			return 0, err
+		}
+		seconds, err = strconv.ParseFloat(parts[2], 64)
+		if err != nil {
+			return 0, err
+		}
+	} else if len(parts) == 2 {
+		minutes, err = strconv.ParseFloat(parts[0], 64)
+		if err != nil {
+			return 0, err
+		}
+		seconds, err = strconv.ParseFloat(parts[1], 64)
+		if err != nil {
+			return 0, err
+		}
+	} else {
+		return 0, fmt.Errorf("invalid timestamp format: %s", ts)
 	}
+
+	return hours*3600 + minutes*60 + seconds, nil
+}
+
+func parseVTT(vttPath string) ([]TranscriptSegment, error) {
+	file, err := os.Open(vttPath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	var segments []TranscriptSegment
+	var currentSegment *TranscriptSegment
+
+	// Skip WEBVTT header
+	for scanner.Scan() {
+		if strings.TrimSpace(scanner.Text()) == "" {
+			break
+		}
+	}
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.Contains(line, "-->") {
+			parts := strings.Split(line, " --> ")
+			if len(parts) == 2 {
+				start, err1 := parseVTTTimestamp(strings.Split(parts[0], " ")[0])
+				end, err2 := parseVTTTimestamp(strings.Split(parts[1], " ")[0])
+				if err1 == nil && err2 == nil {
+					currentSegment = &TranscriptSegment{Start: start, End: end}
+				}
+			}
+		} else if currentSegment != nil && line != "" {
+			currentSegment.Text = line
+			segments = append(segments, *currentSegment)
+			currentSegment = nil // Reset for the next segment
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	return segments, nil
+}
+
+func getEnv(key, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return fallback
+}
+
+func transcribeVideo(videoPath string) ([]TranscriptSegment, error) {
+	log.Printf("Starting transcription for video: %s", videoPath)
+
+	// 1. Extract audio to a temporary WAV file.
+	audioPath := filepath.Join("uploads", "temp_audio.wav")
+	cmdAudio := exec.Command("ffmpeg", "-i", videoPath, "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", "-y", audioPath)
+	output, err := cmdAudio.CombinedOutput()
+	if err != nil {
+		log.Printf("ffmpeg audio extraction error: %s\n%s", err, output)
+		return nil, fmt.Errorf("failed to extract audio: %s", output)
+	}
+	defer os.Remove(audioPath)
+
+	// 2. Run whisper.cpp to transcribe the audio and output to a VTT file.
+	whisperCliPath := getEnv("WHISPER_CLI_PATH", "./whisper.cpp/build/bin/whisper-cli")
+	whisperModelPath := getEnv("WHISPER_MODEL_PATH", "./whisper.cpp/models/ggml-base.en.bin")
+	transcriptOutputPath := filepath.Join("uploads", "temp_transcript")
+
+	cmdWhisper := exec.Command(
+		whisperCliPath,
+		"-m", whisperModelPath,
+		"-f", audioPath,
+		"-ovtt", // Output in VTT format
+		"-of", transcriptOutputPath,
+	)
+	cmdWhisper.Dir = "." // Run from the app's root directory
+
+	output, err = cmdWhisper.CombinedOutput()
+	if err != nil {
+		log.Printf("whisper.cpp error: %s\n%s", err, output)
+		return nil, fmt.Errorf("failed to transcribe audio: %s", output)
+	}
+
+	// The tool appends .vtt to the output file name.
+	transcriptVTTPath := transcriptOutputPath + ".vtt"
+	defer os.Remove(transcriptVTTPath)
+
+	// 3. Read and parse the transcript VTT file.
+	transcript, err := parseVTT(transcriptVTTPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse VTT transcript: %w", err)
+	}
+
+	log.Printf("Transcription successful for video: %s", videoPath)
 	return transcript, nil
 }
