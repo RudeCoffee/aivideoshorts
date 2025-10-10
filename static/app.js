@@ -34,8 +34,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         p.dataset.start = segment.start;
                         p.dataset.end = segment.end;
                         p.addEventListener('click', () => {
-                            document.getElementById('start').value = segment.start;
-                            document.getElementById('end').value = segment.end;
+                            p.classList.toggle('selected');
+                            updateClipTimes();
                         });
                         transcriptDiv.appendChild(p);
                     });
@@ -98,6 +98,27 @@ document.addEventListener('DOMContentLoaded', () => {
         e.preventDefault();
         handleClipRequest('/clip', clipButton);
     });
+
+    function updateClipTimes() {
+        const selected = transcriptDiv.querySelectorAll('p.selected');
+        if (selected.length > 0) {
+            let minStart = selected[0].dataset.start;
+            let maxEnd = selected[0].dataset.end;
+            selected.forEach(p => {
+                if (p.dataset.start < minStart) {
+                    minStart = p.dataset.start;
+                }
+                if (p.dataset.end > maxEnd) {
+                    maxEnd = p.dataset.end;
+                }
+            });
+            document.getElementById('start').value = minStart;
+            document.getElementById('end').value = maxEnd;
+        } else {
+            document.getElementById('start').value = '';
+            document.getElementById('end').value = '';
+        }
+    }
 
     autoClipButton.addEventListener('click', () => {
         handleClipRequest('/autoclip', autoClipButton);

@@ -9,3 +9,18 @@ body {
     height: 300px;
     overflow-y: scroll;
 }
+
+#transcript p {
+    cursor: pointer;
+    padding: 5px;
+    border-radius: 3px;
+    transition: background-color 0.2s;
+}
+
+#transcript p:hover {
+    background-color: #f0f0f0;
+}
+
+#transcript p.selected {
+    background-color: #d0e0ff;
+}
