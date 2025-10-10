@@ -13,6 +13,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"image"
+	_ "image/png"
 
 	pigo "github.com/esimov/pigo/core"
 )
@@ -292,7 +294,13 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		log.Fatalf("Error reading the cascade file: %s", err)
 	}
 
-	for _, file := range frameFiles {
+	croppedFramesDir := filepath.Join(framesDir, "cropped")
+	if err := os.MkdirAll(croppedFramesDir, os.ModePerm); err != nil {
+		http.Error(w, "Failed to create cropped frames directory", http.StatusInternalServerError)
+		return
+	}
+
+	for i, file := range frameFiles {
 		src, err := pigo.GetImage(filepath.ToSlash(file))
 		if err != nil {
 			log.Printf("Cannot open the image file: %v", err)
@@ -332,44 +340,30 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 			// If no face has been detected yet, use the center of the frame
 			facePositions = append(facePositions, dims.Width/2)
 		}
-	}
 
-	// Smooth the face positions using a simple moving average
-	smoothedPositions := movingAverage(facePositions, 15)
+		// Smooth the face positions using a simple moving average
+		smoothedPositions := movingAverage(facePositions, 15)
+		cropWidth := dims.Height * 9 / 16
+		x := smoothedPositions[len(smoothedPositions)-1] - (cropWidth / 2)
 
-	// Generate the sendcmd file in the root directory
-	sendcmdPath := "sendcmd.txt"
-	cmdFile, err := os.Create(sendcmdPath)
-	if err != nil {
-		log.Printf("Failed to create sendcmd file: %s", err)
-		http.Error(w, "Failed to create sendcmd file", http.StatusInternalServerError)
-		return
-	}
-	defer os.Remove(sendcmdPath) // Clean up the command file
-
-	cropWidth := dims.Height * 9 / 16
-	for i, pos := range smoothedPositions {
-		x := pos - (cropWidth / 2)
 		if x < 0 {
 			x = 0
 		}
 		if x+cropWidth > dims.Width {
 			x = dims.Width - cropWidth
 		}
-		// The time for the command is based on the frame number and the video's frame rate (assuming 30fps)
-		frameTime := float64(i) / 30.0
-		// The command needs to be in the format: <time> <filter> <key> <value>
-		cmdFile.WriteString(fmt.Sprintf("%f crop x %d\n", frameTime, x))
+
+		vf := fmt.Sprintf("crop=%d:%d:%d:0,scale=1080:1920,setsar=1", cropWidth, dims.Height, x)
+		croppedFramePath := filepath.Join(croppedFramesDir, fmt.Sprintf("frame-%04d.png", i))
+		cmd := exec.Command("ffmpeg", "-y", "-i", file, "-vf", vf, croppedFramePath)
+		if err := cmd.Run(); err != nil {
+			log.Printf("Failed to crop frame %s: %s", file, err)
+		}
 	}
-	cmdFile.Close() // Close the file to ensure it's written before ffmpeg reads it
 
-	// Set initial crop x value and use forward slashes in the path for cross-platform compatibility
-	// vf := fmt.Sprintf("sendcmd=f=%s,crop=w=%d:h=%d:x=0,scale=1080:1920,setsar=1", sendcmdPath, cropWidth, dims.Height)
-	// Fallback to old logic for now
-	cmd := exec.Command("ffmpeg", "-i", filepath.Join("uploads", videoFile), "-vf", "crop=in_h*9/16:in_h,scale=1080:1920,setsar=1", "-ss", start, "-to", end, clipPath)
-
-	log.Printf("Executing ffmpeg command: %s", cmd.String())
-	output, err = cmd.CombinedOutput()
+	// Stitch the cropped frames back together
+	cmdStitch := exec.Command("ffmpeg", "-y", "-framerate", "30", "-i", filepath.Join(croppedFramesDir, "frame-%04d.png"), "-c:v", "libx264", "-pix_fmt", "yuv420p", clipPath)
+	output, err = cmdStitch.CombinedOutput()
 	if err != nil {
 		log.Printf("ffmpeg error: %s\n%s", err, output)
 		http.Error(w, fmt.Sprintf("Failed to create clip: %s", output), http.StatusInternalServerError)
