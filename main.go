@@ -276,12 +276,15 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 	if len(dets) > 0 && len(dets[0]) > 0 {
 		// New face tracking logic
 		face := dets[0][0]
-		x := face.Col - face.Scale/2
-		y := face.Row - face.Scale/2
-		// Ensure the crop area doesn't go out of bounds
-		vf := fmt.Sprintf("crop='if(gte(iw,ih*9/16),ih*9/16,iw)':'if(gte(iw,ih*9/16),ih,iw*16/9)':min(max(x,0),iw-iw*9/16):min(max(y,0),ih-ih)',scale=1080:1920,setsar=1")
-		vf = strings.Replace(vf, "x", strconv.Itoa(x), 1)
-		vf = strings.Replace(vf, "y", strconv.Itoa(y), 1)
+		faceCenterX := face.Col
+
+		// Dynamic crop to keep the face centered horizontally.
+		// w = ih*9/16 (width of 9:16 crop)
+		// h = ih (full height)
+		// x = max(0, min(face_center_x - w/2, iw - w))  (clamped x-position)
+		// y = 0 (no vertical panning)
+		vf := fmt.Sprintf("crop=w=ih*9/16:h=ih:x=max(0,min(%d-ih*9/32,iw-ih*9/16)):y=0,scale=1080:1920,setsar=1", faceCenterX)
+
 		cmd = exec.Command("ffmpeg", "-i", filepath.Join("uploads", videoFile), "-vf", vf, "-ss", start, "-to", end, clipPath)
 	} else {
 		// Old logic
