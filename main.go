@@ -293,7 +293,7 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, file := range frameFiles {
-		src, err := pigo.GetImage(file)
+		src, err := pigo.GetImage(filepath.ToSlash(file))
 		if err != nil {
 			log.Printf("Cannot open the image file: %v", err)
 			continue
