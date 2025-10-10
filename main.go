@@ -4,10 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"image"
-	_ "image/png"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -16,8 +13,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-
-	pigo "github.com/esimov/pigo/core"
 )
 
 // TranscriptSegment represents a single segment of the video transcript.
@@ -31,6 +26,32 @@ type TranscriptSegment struct {
 type UploadResponse struct {
 	Transcript  []TranscriptSegment `json:"transcript"`
 	VideoFile   string              `json:"videoFile"`
+}
+
+type videoDimensions struct {
+	Width  int `json:"width"`
+	Height int `json:"height"`
+}
+
+func getVideoDimensions(videoPath string) (*videoDimensions, error) {
+	cmd := exec.Command("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "json", videoPath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("ffprobe error: %s\n%s", err, output)
+	}
+
+	var data struct {
+		Streams []videoDimensions `json:"streams"`
+	}
+	if err := json.Unmarshal(output, &data); err != nil {
+		return nil, err
+	}
+
+	if len(data.Streams) == 0 {
+		return nil, fmt.Errorf("no video streams found")
+	}
+
+	return &data.Streams[0], nil
 }
 
 func main() {
@@ -169,6 +190,14 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 	clipFile := fmt.Sprintf("autoclip-%s-%s-%s", start, end, videoFile)
 	clipPath := filepath.Join("static", clipFile)
 
+	// Get video dimensions
+	dims, err := getVideoDimensions(filepath.Join("uploads", videoFile))
+	if err != nil {
+		log.Printf("Failed to get video dimensions: %s", err)
+		http.Error(w, "Failed to get video dimensions", http.StatusInternalServerError)
+		return
+	}
+
 	// Create a temporary directory to store frames
 	framesDir := filepath.Join("uploads", "frames")
 	if err := os.MkdirAll(framesDir, os.ModePerm); err != nil {
@@ -277,21 +306,22 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		// New face tracking logic
 		face := dets[0][0]
 		faceCenterX := face.Col
+		cropWidth := dims.Height * 9 / 16
+		x := faceCenterX - cropWidth/2
 
-		// Dynamic crop to keep the face centered horizontally.
-		// w = ih*9/16 (width of 9:16 crop)
-		// h = ih (full height)
-		// x = clamp(val, min, max)
-		// val = face_center_x - w/2
-		// min = 0
-		// max = iw - w
-		vf := fmt.Sprintf("crop=w=ih*9/16:h=ih:x=clamp(%d-ih*9/32,0,iw-ih*9/16):y=0,scale=1080:1920,setsar=1", faceCenterX)
+		if x < 0 {
+			x = 0
+		}
+		if x+cropWidth > dims.Width {
+			x = dims.Width - cropWidth
+		}
+
+		vf := fmt.Sprintf("crop=%d:%d:%d:%d,scale=1080:1920,setsar=1", cropWidth, dims.Height, x, 0)
 		cmd = exec.Command("ffmpeg", "-i", filepath.Join("uploads", videoFile), "-vf", vf, "-ss", start, "-to", end, clipPath)
 	} else {
 		// Old logic
 		cmd = exec.Command("ffmpeg", "-i", filepath.Join("uploads", videoFile), "-vf", "crop=ih*9/16:ih,scale=1080:1920,setsar=1", "-ss", start, "-to", end, clipPath)
 	}
-
 	output, err = cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("ffmpeg error: %s\n%s", err, output)
