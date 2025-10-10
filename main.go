@@ -19,36 +19,6 @@ import (
 	pigo "github.com/esimov/pigo/core"
 )
 
-func abs(x int) int {
-	if x < 0 {
-		return -x
-	}
-	return x
-}
-
-func movingAverage(data []int, windowSize int) []int {
-	if windowSize <= 1 {
-		return data
-	}
-	smoothed := make([]int, len(data))
-	for i := range data {
-		start := i - windowSize/2
-		if start < 0 {
-			start = 0
-		}
-		end := i + windowSize/2
-		if end > len(data) {
-			end = len(data)
-		}
-		sum := 0
-		for _, val := range data[start:end] {
-			sum += val
-		}
-		smoothed[i] = sum / (end - start)
-	}
-	return smoothed
-}
-
 type videoDimensions struct {
 	Width  int `json:"width"`
 	Height int `json:"height"`
@@ -287,7 +257,7 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var facePositions []int
+	var facePositionsBySecond = make(map[int][]int)
 	frameFiles, err := filepath.Glob(filepath.Join(framesDir, "*.png"))
 	if err != nil {
 		log.Printf("Failed to find frame files: %s", err)
@@ -299,12 +269,6 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 	classifier, err := p.Unpack(cascadeFile)
 	if err != nil {
 		log.Fatalf("Error reading the cascade file: %s", err)
-	}
-
-	croppedFramesDir := filepath.Join(framesDir, "cropped")
-	if err := os.MkdirAll(croppedFramesDir, os.ModePerm); err != nil {
-		http.Error(w, "Failed to create cropped frames directory", http.StatusInternalServerError)
-		return
 	}
 
 	for i, file := range frameFiles {
@@ -338,63 +302,53 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		// Calculate the intersection over union (IoU) of two clusters.
 		detections = classifier.ClusterDetections(detections, 0.2)
 
+		second := i / 30 // Assuming 30fps
 		if len(detections) > 0 {
-			facePositions = append(facePositions, detections[0].Col)
-		} else if len(facePositions) > 0 {
-			// If no face is detected, use the last known position
-			facePositions = append(facePositions, facePositions[len(facePositions)-1])
+			facePositionsBySecond[second] = append(facePositionsBySecond[second], detections[0].Col)
+		}
+	}
+
+	var avgFacePositions []int
+	for i := 0; i < len(frameFiles)/30; i++ {
+		positions := facePositionsBySecond[i]
+		if len(positions) > 0 {
+			sum := 0
+			for _, pos := range positions {
+				sum += pos
+			}
+			avgFacePositions = append(avgFacePositions, sum/len(positions))
+		} else if len(avgFacePositions) > 0 {
+			avgFacePositions = append(avgFacePositions, avgFacePositions[len(avgFacePositions)-1])
 		} else {
-			// If no face has been detected yet, use the center of the frame
-			facePositions = append(facePositions, dims.Width/2)
+			avgFacePositions = append(avgFacePositions, dims.Width/2)
 		}
-
 	}
 
-	if len(facePositions) > 0 {
-		minX := facePositions[0]
-		maxX := facePositions[0]
-		for _, pos := range facePositions {
-			if pos < minX {
-				minX = pos
+	var vf string
+	if len(avgFacePositions) > 0 {
+		var xExpr string
+		for i, pos := range avgFacePositions {
+			x := pos - (dims.Height*9/16)/2
+			if x < 0 {
+				x = 0
 			}
-			if pos > maxX {
-				maxX = pos
+			if x+dims.Height*9/16 > dims.Width {
+				x = dims.Width - dims.Height*9/16
 			}
+			xExpr += fmt.Sprintf("if(eq(in_frame,%d),%d,", i*30, x)
 		}
-
-		cropWidth := dims.Height * 9 / 16
-		x := (minX + maxX) / 2 - cropWidth/2
-
-		if x < 0 {
-			x = 0
+		// Add a fallback value and close the parentheses
+		xExpr += fmt.Sprintf("%d", dims.Width/2)
+		for i := 0; i < len(avgFacePositions); i++ {
+			xExpr += ")"
 		}
-		if x+cropWidth > dims.Width {
-			x = dims.Width - cropWidth
-		}
-
-		for i, file := range frameFiles {
-			vf := fmt.Sprintf("crop=%d:%d:%d:0,scale=1080:1920,setsar=1", cropWidth, dims.Height, x)
-			croppedFramePath := filepath.Join(croppedFramesDir, fmt.Sprintf("frame-%04d.png", i))
-			cmd := exec.Command("ffmpeg", "-y", "-i", file, "-vf", vf, croppedFramePath)
-			if err := cmd.Run(); err != nil {
-				log.Printf("Failed to crop frame %s: %s", file, err)
-			}
-		}
+		vf = fmt.Sprintf("zoompan=z='1.5':x='%s':y='0':d=1,scale=1080:1920,setsar=1", xExpr)
 	} else {
-		// Fallback to old logic if no faces are detected
-		for i, file := range frameFiles {
-			vf := fmt.Sprintf("crop=in_h*9/16:in_h,scale=1080:1920,setsar=1")
-			croppedFramePath := filepath.Join(croppedFramesDir, fmt.Sprintf("frame-%04d.png", i))
-			cmd := exec.Command("ffmpeg", "-y", "-i", file, "-vf", vf, croppedFramePath)
-			if err := cmd.Run(); err != nil {
-				log.Printf("Failed to crop frame %s: %s", file, err)
-			}
-		}
+		vf = "crop=in_h*9/16:in_h,scale=1080:1920,setsar=1"
 	}
 
-	// Stitch the cropped frames back together
-	cmdStitch := exec.Command("ffmpeg", "-y", "-framerate", "30", "-i", filepath.Join(croppedFramesDir, "frame-%04d.png"), "-c:v", "libx264", "-pix_fmt", "yuv420p", clipPath)
-	output, err = cmdStitch.CombinedOutput()
+	cmd := exec.Command("ffmpeg", "-y", "-i", filepath.Join("uploads", videoFile), "-vf", vf, "-ss", start, "-to", end, "-t", "5", clipPath)
+	output, err = cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("ffmpeg error: %s\n%s", err, output)
 		http.Error(w, fmt.Sprintf("Failed to create clip: %s", output), http.StatusInternalServerError)
