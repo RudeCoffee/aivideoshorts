@@ -13,8 +13,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"image"
-	_ "image/png"
 
 	pigo "github.com/esimov/pigo/core"
 )
