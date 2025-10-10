@@ -19,6 +19,13 @@ import (
 	pigo "github.com/esimov/pigo/core"
 )
 
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
 func movingAverage(data []int, windowSize int) []int {
 	if windowSize <= 1 {
 		return data
@@ -342,7 +349,7 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Smooth the face positions using a simple moving average
-		smoothedPositions := movingAverage(facePositions, 15)
+		smoothedPositions := movingAverage(facePositions, 30) // Increased window size
 		cropWidth := dims.Height * 9 / 16
 		x := smoothedPositions[len(smoothedPositions)-1] - (cropWidth / 2)
 
@@ -351,6 +358,14 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		if x+cropWidth > dims.Width {
 			x = dims.Width - cropWidth
+		}
+
+		// Only update the crop if the face has moved a significant distance
+		if i > 0 {
+			lastX := facePositions[i-1] - (cropWidth / 2)
+			if abs(x-lastX) < 10 {
+				x = lastX
+			}
 		}
 
 		vf := fmt.Sprintf("crop=%d:%d:%d:0,scale=1080:1920,setsar=1", cropWidth, dims.Height, x)
