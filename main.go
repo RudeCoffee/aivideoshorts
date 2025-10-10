@@ -42,6 +42,7 @@ func main() {
 	})
 	http.HandleFunc("/upload", uploadHandler)
 	http.HandleFunc("/clip", clipHandler)
+	http.HandleFunc("/autoclip", autoClipHandler)
 
 	log.Println("Starting server on :8080")
 	if err := http.ListenAndServe(":8080", nil); err != nil {
@@ -129,6 +130,42 @@ func clipHandler(w http.ResponseWriter, r *http.Request) {
 	clipPath := filepath.Join("static", clipFile)
 
 	cmd := exec.Command("ffmpeg", "-i", filepath.Join("uploads", videoFile), "-ss", start, "-to", end, "-c", "copy", clipPath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("ffmpeg error: %s\n%s", err, output)
+		http.Error(w, fmt.Sprintf("Failed to create clip: %s", output), http.StatusInternalServerError)
+		return
+	}
+
+	fmt.Fprintf(w, "/static/%s", clipFile)
+}
+
+func autoClipHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Failed to parse form", http.StatusBadRequest)
+		return
+	}
+
+	start := r.FormValue("start")
+	end := r.FormValue("end")
+	videoFile := r.FormValue("videoFile")
+
+	if start == "" || end == "" || videoFile == "" {
+		http.Error(w, "Missing required form values: start, end, and videoFile", http.StatusBadRequest)
+		return
+	}
+
+	// Create a unique name for the clip
+	clipFile := fmt.Sprintf("autoclip-%s-%s-%s", start, end, videoFile)
+	clipPath := filepath.Join("static", clipFile)
+
+	// Command to crop to 9:16, scale, and maintain aspect ratio
+	cmd := exec.Command("ffmpeg", "-i", filepath.Join("uploads", videoFile), "-vf", "crop=ih*9/16:ih,scale=1080:1920,setsar=1", "-ss", start, "-to", end, clipPath)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("ffmpeg error: %s\n%s", err, output)
