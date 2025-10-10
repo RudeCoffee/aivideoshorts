@@ -53,6 +53,32 @@ type UploadResponse struct {
 	VideoFile   string              `json:"videoFile"`
 }
 
+func getVideoDimensions(videoPath string) (*videoDimensions, error) {
+	cmd := exec.Command("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "json", videoPath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("ffprobe error: %s\n%s", err, output)
+	}
+
+	var data struct {
+		Streams []videoDimensions `json:"streams"`
+	}
+	if err := json.Unmarshal(output, &data); err != nil {
+		return nil, err
+	}
+
+	if len(data.Streams) == 0 {
+		return nil, fmt.Errorf("no video streams found")
+	}
+
+	return &data.Streams[0], nil
+}
+
+type videoDimensions struct {
+	Width  int `json:"width"`
+	Height int `json:"height"`
+}
+
 func main() {
 	// Check if ffmpeg is installed.
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
