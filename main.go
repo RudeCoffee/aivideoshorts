@@ -28,6 +28,46 @@ type UploadResponse struct {
 	VideoFile   string              `json:"videoFile"`
 }
 
+// Face represents the coordinates of a detected face.
+type Face struct {
+	Top    int
+	Right  int
+	Bottom int
+	Left   int
+}
+
+func parseFaceData(data string) ([]Face, error) {
+	var faces []Face
+	lines := strings.Split(data, "\n")
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, ",")
+		if len(parts) != 5 {
+			return nil, fmt.Errorf("invalid face data line: %s", line)
+		}
+		top, err := strconv.Atoi(parts[1])
+		if err != nil {
+			return nil, err
+		}
+		right, err := strconv.Atoi(parts[2])
+		if err != nil {
+			return nil, err
+		}
+		bottom, err := strconv.Atoi(parts[3])
+		if err != nil {
+			return nil, err
+		}
+		left, err := strconv.Atoi(parts[4])
+		if err != nil {
+			return nil, err
+		}
+		faces = append(faces, Face{Top: top, Right: right, Bottom: bottom, Left: left})
+	}
+	return faces, nil
+}
+
 func main() {
 	// Check if ffmpeg is installed.
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
@@ -164,9 +204,55 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 	clipFile := fmt.Sprintf("autoclip-%s-%s-%s", start, end, videoFile)
 	clipPath := filepath.Join("static", clipFile)
 
+	// Create a temporary directory to store frames
+	framesDir := filepath.Join("uploads", "frames")
+	if err := os.MkdirAll(framesDir, os.ModePerm); err != nil {
+		http.Error(w, "Failed to create frames directory", http.StatusInternalServerError)
+		return
+	}
+	defer os.RemoveAll(framesDir)
+
+	// Extract frames from the video
+	cmdFrames := exec.Command("ffmpeg", "-i", filepath.Join("uploads", videoFile), "-ss", start, "-to", end, filepath.Join(framesDir, "frame-%04d.png"))
+	output, err := cmdFrames.CombinedOutput()
+	if err != nil {
+		log.Printf("ffmpeg error: %s\n%s", err, output)
+		http.Error(w, fmt.Sprintf("Failed to extract frames: %s", output), http.StatusInternalServerError)
+		return
+	}
+
+	// Run face detection on the frames
+	cmdFaces := exec.Command("face_detection", "--cpus", "-1", framesDir)
+	output, err = cmdFaces.CombinedOutput()
+	if err != nil {
+		log.Printf("face_detection error: %s\n%s", err, output)
+		// Don't error out if face detection fails, just fall back to the old method
+	}
+
+	faceData, err := parseFaceData(string(output))
+	if err != nil {
+		log.Printf("Error parsing face data: %s", err)
+		// Fallback to the old method
+	}
+
 	// Command to crop to 9:16, scale, and maintain aspect ratio
-	cmd := exec.Command("ffmpeg", "-i", filepath.Join("uploads", videoFile), "-vf", "crop=ih*9/16:ih,scale=1080:1920,setsar=1", "-ss", start, "-to", end, clipPath)
-	output, err := cmd.CombinedOutput()
+	var cmd *exec.Cmd
+	if len(faceData) > 0 {
+		// New face tracking logic
+		// For simplicity, we'll just use the first detected face in the first frame for now.
+		// A more advanced implementation would track the face across frames.
+		face := faceData[0]
+		x := face.Left + (face.Right-face.Left)/2
+		vf := fmt.Sprintf("crop=ih*9/16:ih:min(max(x-(iw*9/32),0),w-(iw*9/16)),y,scale=1080:1920,setsar=1")
+		cmd = exec.Command("ffmpeg", "-i", filepath.Join("uploads", videoFile), "-vf", vf, "-ss", start, "-to", end, clipPath)
+		cmd.Args[5] = strings.Replace(cmd.Args[5], "x", strconv.Itoa(x), 1)
+
+	} else {
+		// Old logic
+		cmd = exec.Command("ffmpeg", "-i", filepath.Join("uploads", videoFile), "-vf", "crop=ih*9/16:ih,scale=1080:1920,setsar=1", "-ss", start, "-to", end, clipPath)
+	}
+
+	output, err = cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("ffmpeg error: %s\n%s", err, output)
 		http.Error(w, fmt.Sprintf("Failed to create clip: %s", output), http.StatusInternalServerError)
