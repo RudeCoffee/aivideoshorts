@@ -165,7 +165,7 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 	clipPath := filepath.Join("static", clipFile)
 
 	// Command to crop to 9:16, scale, and maintain aspect ratio
-	cmd := exec.Command("ffmpeg", "-i", filepath.Join("uploads", videoFile), "-vf", "crop=ih*9/16:ih:100,scale=1080:1920,setsar=1", "-ss", start, "-to", end, clipPath)
+	cmd := exec.Command("ffmpeg", "-i", filepath.Join("uploads", videoFile), "-vf", "crop=in_h*9/16:in_h,scale=1080:1920,setsar=1", "-ss", start, "-to", end, clipPath)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("ffmpeg error: %s\n%s", err, output)
