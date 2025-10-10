@@ -325,7 +325,9 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fallback to old logic for now
-	cmd := exec.Command("ffmpeg", "-y", "-i", filepath.Join("uploads", videoFile), "-vf", "crop=in_h*9/16:in_h,scale=1080:1920,setsar=1", "-ss", start, "-to", end, clipPath)
+	subtitlePath := filepath.ToSlash(filepath.Join("uploads", strings.TrimSuffix(videoFile, filepath.Ext(videoFile))+".vtt"))
+	defer os.Remove(subtitlePath)
+	cmd := exec.Command("ffmpeg", "-y", "-i", filepath.Join("uploads", videoFile), "-vf", "crop=in_h*9/16:in_h,scale=1080:1920,setsar=1,subtitles="+subtitlePath+":force_style='Alignment=10,FontName=Arial,FontSize=24,PrimaryColour=&Hffffff&,BackColor=&H80000000&,BorderStyle=1,Outline=1,Shadow=0,MarginV=20'", "-ss", start, "-to", end, clipPath)
 	output, err = cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("ffmpeg error: %s\n%s", err, output)
@@ -447,7 +449,7 @@ func transcribeVideo(videoPath string) ([]TranscriptSegment, error) {
 
 	defaultModelPath := filepath.Join(".", "whisper.cpp", "models", "ggml-base.en.bin")
 	whisperModelPath := getEnv("WHISPER_MODEL_PATH", defaultModelPath)
-	transcriptOutputPath := filepath.Join("uploads", "temp_transcript")
+	transcriptOutputPath := filepath.Join("uploads", strings.TrimSuffix(filepath.Base(videoPath), filepath.Ext(videoPath)))
 
 	// Prepare arguments for whisper-cli
 	args := []string{
@@ -474,7 +476,6 @@ func transcribeVideo(videoPath string) ([]TranscriptSegment, error) {
 
 	// The tool appends .vtt to the output file name.
 	transcriptVTTPath := transcriptOutputPath + ".vtt"
-	defer os.Remove(transcriptVTTPath)
 
 	// 3. Read and parse the transcript VTT file.
 	transcript, err := parseVTT(transcriptVTTPath)
