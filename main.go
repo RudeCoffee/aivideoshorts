@@ -281,10 +281,11 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		// Dynamic crop to keep the face centered horizontally.
 		// w = ih*9/16 (width of 9:16 crop)
 		// h = ih (full height)
-		// x = max(0, min(face_center_x - w/2, iw - w))  (clamped x-position)
-		// y = 0 (no vertical panning)
-		vf := fmt.Sprintf("crop=w=ih*9/16:h=ih:x=max(0,min(%d-ih*9/32,iw-ih*9/16)):y=0,scale=1080:1920,setsar=1", faceCenterX)
-
+		// x = clamp(val, min, max)
+		// val = face_center_x - w/2
+		// min = 0
+		// max = iw - w
+		vf := fmt.Sprintf("crop=w=ih*9/16:h=ih:x=clamp(%d-ih*9/32,0,iw-ih*9/16):y=0,scale=1080:1920,setsar=1", faceCenterX)
 		cmd = exec.Command("ffmpeg", "-i", filepath.Join("uploads", videoFile), "-vf", vf, "-ss", start, "-to", end, clipPath)
 	} else {
 		// Old logic
