@@ -359,11 +359,13 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		// The time for the command is based on the frame number and the video's frame rate (assuming 30fps)
 		frameTime := float64(i) / 30.0
-		cmdFile.WriteString(fmt.Sprintf("%f crop x %d\n", frameTime, x))
+		// Add semicolon and use CRLF line endings for Windows compatibility
+		cmdFile.WriteString(fmt.Sprintf("%f crop x %d;\r\n", frameTime, x))
 	}
 	cmdFile.Close() // Close the file to ensure it's written before ffmpeg reads it
 
-	vf := fmt.Sprintf("sendcmd=f=%s,crop=w=%d:h=%d,scale=1080:1920,setsar=1", sendcmdPath, cropWidth, dims.Height)
+	// Set initial crop x value and use forward slashes in the path for cross-platform compatibility
+	vf := fmt.Sprintf("sendcmd=f='%s',crop=w=%d:h=%d:x=0,scale=1080:1920,setsar=1", sendcmdPath, cropWidth, dims.Height)
 	cmd := exec.Command("ffmpeg", "-i", filepath.Join("uploads", videoFile), "-vf", vf, "-ss", start, "-to", end, clipPath)
 
 	log.Printf("Executing ffmpeg command: %s", cmd.String())
