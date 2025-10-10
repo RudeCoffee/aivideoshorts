@@ -186,7 +186,7 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cascadeFile, err := ioutil.ReadFile("cascade/facefinder")
+	cascadeFile, err := ioutil.ReadFile(filepath.Join("cascade", "facefinder"))
 	if err != nil {
 		log.Println("Cascade file not found, downloading...")
 		err := os.MkdirAll("cascade", os.ModePerm)
@@ -203,7 +203,7 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		defer resp.Body.Close()
 
-		out, err := os.Create("cascade/facefinder")
+		out, err := os.Create(filepath.Join("cascade", "facefinder"))
 		if err != nil {
 			log.Printf("Failed to create cascade file: %s", err)
 			http.Error(w, "Failed to create cascade file", http.StatusInternalServerError)
@@ -216,7 +216,7 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Failed to save cascade file", http.StatusInternalServerError)
 			return
 		}
-		cascadeFile, err = ioutil.ReadFile("cascade/facefinder")
+		cascadeFile, err = ioutil.ReadFile(filepath.Join("cascade", "facefinder"))
 		if err != nil {
 			log.Printf("Failed to read cascade file after download: %s", err)
 			http.Error(w, "Failed to read cascade file", http.StatusInternalServerError)
@@ -276,11 +276,13 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 	if len(dets) > 0 && len(dets[0]) > 0 {
 		// New face tracking logic
 		face := dets[0][0]
-		x := face.Col
-		vf := fmt.Sprintf("crop=ih*9/16:ih:min(max(x-(iw*9/32),0),w-(iw*9/16)),y,scale=1080:1920,setsar=1")
+		x := face.Col - face.Scale/2
+		y := face.Row - face.Scale/2
+		// Ensure the crop area doesn't go out of bounds
+		vf := fmt.Sprintf("crop='if(gte(iw,ih*9/16),ih*9/16,iw)':'if(gte(iw,ih*9/16),ih,iw*16/9)':min(max(x,0),iw-iw*9/16):min(max(y,0),ih-ih)',scale=1080:1920,setsar=1")
+		vf = strings.Replace(vf, "x", strconv.Itoa(x), 1)
+		vf = strings.Replace(vf, "y", strconv.Itoa(y), 1)
 		cmd = exec.Command("ffmpeg", "-i", filepath.Join("uploads", videoFile), "-vf", vf, "-ss", start, "-to", end, clipPath)
-		cmd.Args[5] = strings.Replace(cmd.Args[5], "x", strconv.Itoa(x), 1)
-
 	} else {
 		// Old logic
 		cmd = exec.Command("ffmpeg", "-i", filepath.Join("uploads", videoFile), "-vf", "crop=ih*9/16:ih,scale=1080:1920,setsar=1", "-ss", start, "-to", end, clipPath)
