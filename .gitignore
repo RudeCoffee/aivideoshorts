@@ -2,7 +2,7 @@
 video-clipper-app
 
 # Uploaded files and temporary transcripts
-/uploads/
+
 
 # Local transcription library
 /whisper.cpp/
