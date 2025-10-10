@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"image"
+	_ "image/png"
 	"io"
 	"log"
 	"net/http"
@@ -13,6 +15,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+
+	face "github.com/andre-ols/go-face-recognition"
 )
 
 // TranscriptSegment represents a single segment of the video transcript.
@@ -28,50 +32,42 @@ type UploadResponse struct {
 	VideoFile   string              `json:"videoFile"`
 }
 
-// Face represents the coordinates of a detected face.
-type Face struct {
-	Top    int
-	Right  int
-	Bottom int
-	Left   int
-}
-
-func parseFaceData(data string) ([]Face, error) {
-	var faces []Face
-	lines := strings.Split(data, "\n")
-	for _, line := range lines {
-		if line == "" {
-			continue
-		}
-		parts := strings.Split(line, ",")
-		if len(parts) != 5 {
-			return nil, fmt.Errorf("invalid face data line: %s", line)
-		}
-		top, err := strconv.Atoi(parts[1])
-		if err != nil {
-			return nil, err
-		}
-		right, err := strconv.Atoi(parts[2])
-		if err != nil {
-			return nil, err
-		}
-		bottom, err := strconv.Atoi(parts[3])
-		if err != nil {
-			return nil, err
-		}
-		left, err := strconv.Atoi(parts[4])
-		if err != nil {
-			return nil, err
-		}
-		faces = append(faces, Face{Top: top, Right: right, Bottom: bottom, Left: left})
-	}
-	return faces, nil
-}
-
 func main() {
 	// Check if ffmpeg is installed.
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		log.Fatal("ffmpeg is not installed or not in the system's PATH.")
+	}
+
+	// Check for model files and download if they don't exist
+	modelDir := "models"
+	if _, err := os.Stat(modelDir); os.IsNotExist(err) {
+		log.Println("Models directory not found, creating...")
+		os.Mkdir(modelDir, os.ModePerm)
+	}
+
+	modelFiles := []string{"dlib_face_recognition_resnet_model_v1.dat", "mmod_human_face_detector.dat", "shape_predictor_5_face_landmarks.dat"}
+	for _, file := range modelFiles {
+		filePath := filepath.Join(modelDir, file)
+		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			log.Printf("Downloading %s...", file)
+			url := fmt.Sprintf("https://github.com/andre-ols/go-face-recognition/raw/main/models/%s", file)
+			resp, err := http.Get(url)
+			if err != nil {
+				log.Fatalf("Failed to download %s: %s", file, err)
+			}
+			defer resp.Body.Close()
+
+			out, err := os.Create(filePath)
+			if err != nil {
+				log.Fatalf("Failed to create file for %s: %s", file, err)
+			}
+			defer out.Close()
+
+			_, err = io.Copy(out, resp.Body)
+			if err != nil {
+				log.Fatalf("Failed to save %s: %s", file, err)
+			}
+		}
 	}
 
 	fs := http.FileServer(http.Dir("static"))
@@ -221,28 +217,34 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Run face detection on the frames
-	cmdFaces := exec.Command("face_detection", "--cpus", "-1", framesDir)
-	output, err = cmdFaces.CombinedOutput()
+	// Initialize face recognizer
+	rec, err := face.NewRecognizer("models")
 	if err != nil {
-		log.Printf("face_detection error: %s\n%s", err, output)
-		// Don't error out if face detection fails, just fall back to the old method
+		log.Printf("Failed to create recognizer: %s", err)
+		http.Error(w, "Failed to create face recognizer", http.StatusInternalServerError)
+		return
+	}
+	defer rec.Close()
+
+	var faces []face.Face
+	frameFiles, err := filepath.Glob(filepath.Join(framesDir, "*.png"))
+	if err != nil {
+		log.Printf("Failed to find frame files: %s", err)
 	}
 
-	faceData, err := parseFaceData(string(output))
-	if err != nil {
-		log.Printf("Error parsing face data: %s", err)
-		// Fallback to the old method
+	if len(frameFiles) > 0 {
+		faces, err = rec.RecognizeFile(frameFiles[0])
+		if err != nil {
+			log.Printf("Failed to recognize faces in file: %s", err)
+		}
 	}
 
 	// Command to crop to 9:16, scale, and maintain aspect ratio
 	var cmd *exec.Cmd
-	if len(faceData) > 0 {
+	if len(faces) > 0 {
 		// New face tracking logic
-		// For simplicity, we'll just use the first detected face in the first frame for now.
-		// A more advanced implementation would track the face across frames.
-		face := faceData[0]
-		x := face.Left + (face.Right-face.Left)/2
+		face := faces[0]
+		x := face.Rectangle.Min.X + (face.Rectangle.Dx() / 2)
 		vf := fmt.Sprintf("crop=ih*9/16:ih:min(max(x-(iw*9/32),0),w-(iw*9/16)),y,scale=1080:1920,setsar=1")
 		cmd = exec.Command("ffmpeg", "-i", filepath.Join("uploads", videoFile), "-vf", vf, "-ss", start, "-to", end, clipPath)
 		cmd.Args[5] = strings.Replace(cmd.Args[5], "x", strconv.Itoa(x), 1)
