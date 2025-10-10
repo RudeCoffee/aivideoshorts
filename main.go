@@ -7,6 +7,7 @@ import (
 	"image"
 	_ "image/png"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -16,7 +17,7 @@ import (
 	"strconv"
 	"strings"
 
-	face "github.com/andre-ols/go-face-recognition"
+	pigo "github.com/esimov/pigo/core"
 )
 
 // TranscriptSegment represents a single segment of the video transcript.
@@ -36,38 +37,6 @@ func main() {
 	// Check if ffmpeg is installed.
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		log.Fatal("ffmpeg is not installed or not in the system's PATH.")
-	}
-
-	// Check for model files and download if they don't exist
-	modelDir := "models"
-	if _, err := os.Stat(modelDir); os.IsNotExist(err) {
-		log.Println("Models directory not found, creating...")
-		os.Mkdir(modelDir, os.ModePerm)
-	}
-
-	modelFiles := []string{"dlib_face_recognition_resnet_model_v1.dat", "mmod_human_face_detector.dat", "shape_predictor_5_face_landmarks.dat"}
-	for _, file := range modelFiles {
-		filePath := filepath.Join(modelDir, file)
-		if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			log.Printf("Downloading %s...", file)
-			url := fmt.Sprintf("https://github.com/andre-ols/go-face-recognition/raw/main/models/%s", file)
-			resp, err := http.Get(url)
-			if err != nil {
-				log.Fatalf("Failed to download %s: %s", file, err)
-			}
-			defer resp.Body.Close()
-
-			out, err := os.Create(filePath)
-			if err != nil {
-				log.Fatalf("Failed to create file for %s: %s", file, err)
-			}
-			defer out.Close()
-
-			_, err = io.Copy(out, resp.Body)
-			if err != nil {
-				log.Fatalf("Failed to save %s: %s", file, err)
-			}
-		}
 	}
 
 	fs := http.FileServer(http.Dir("static"))
@@ -217,34 +186,97 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Initialize face recognizer
-	rec, err := face.NewRecognizer("models")
+	cascadeFile, err := ioutil.ReadFile("cascade/facefinder")
 	if err != nil {
-		log.Printf("Failed to create recognizer: %s", err)
-		http.Error(w, "Failed to create face recognizer", http.StatusInternalServerError)
-		return
-	}
-	defer rec.Close()
+		log.Println("Cascade file not found, downloading...")
+		err := os.MkdirAll("cascade", os.ModePerm)
+		if err != nil {
+			http.Error(w, "Failed to create cascade directory", http.StatusInternalServerError)
+			return
+		}
+		url := "https://github.com/esimov/pigo/raw/master/cascade/facefinder"
+		resp, err := http.Get(url)
+		if err != nil {
+			log.Printf("Failed to download cascade file: %s", err)
+			http.Error(w, "Failed to download cascade file", http.StatusInternalServerError)
+			return
+		}
+		defer resp.Body.Close()
 
-	var faces []face.Face
+		out, err := os.Create("cascade/facefinder")
+		if err != nil {
+			log.Printf("Failed to create cascade file: %s", err)
+			http.Error(w, "Failed to create cascade file", http.StatusInternalServerError)
+			return
+		}
+		defer out.Close()
+		_, err = io.Copy(out, resp.Body)
+		if err != nil {
+			log.Printf("Failed to save cascade file: %s", err)
+			http.Error(w, "Failed to save cascade file", http.StatusInternalServerError)
+			return
+		}
+		cascadeFile, err = ioutil.ReadFile("cascade/facefinder")
+		if err != nil {
+			log.Printf("Failed to read cascade file after download: %s", err)
+			http.Error(w, "Failed to read cascade file", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	var dets [][]pigo.Detection
 	frameFiles, err := filepath.Glob(filepath.Join(framesDir, "*.png"))
 	if err != nil {
 		log.Printf("Failed to find frame files: %s", err)
 	}
 
-	if len(frameFiles) > 0 {
-		faces, err = rec.RecognizeFile(frameFiles[0])
+	for _, file := range frameFiles {
+		src, err := pigo.GetImage(file)
 		if err != nil {
-			log.Printf("Failed to recognize faces in file: %s", err)
+			log.Printf("Cannot open the image file: %v", err)
+			continue
 		}
+
+		pixels := pigo.RgbToGrayscale(src)
+		cols, rows := src.Bounds().Max.X, src.Bounds().Max.Y
+
+		cParams := pigo.CascadeParams{
+			MinSize:     20,
+			MaxSize:     1000,
+			ShiftFactor: 0.1,
+			ScaleFactor: 1.1,
+
+			ImageParams: pigo.ImageParams{
+				Pixels: pixels,
+				Rows:   rows,
+				Cols:   cols,
+				Dim:    cols,
+			},
+		}
+
+		p := pigo.NewPigo()
+		// Unpack the binary file. This will return the number of cascade trees,
+		// the tree depth, the threshold and the prediction from tree's leaf nodes.
+		classifier, err := p.Unpack(cascadeFile)
+		if err != nil {
+			log.Fatalf("Error reading the cascade file: %s", err)
+		}
+
+		// Run the classifier over the obtained leaf nodes and return the detection results.
+		// The result contains quadruplets representing the row, column, scale and detection score.
+		detections := classifier.RunCascade(cParams, 0.0)
+
+		// Calculate the intersection over union (IoU) of two clusters.
+		detections = classifier.ClusterDetections(detections, 0.2)
+		dets = append(dets, detections)
 	}
 
 	// Command to crop to 9:16, scale, and maintain aspect ratio
 	var cmd *exec.Cmd
-	if len(faces) > 0 {
+	if len(dets) > 0 && len(dets[0]) > 0 {
 		// New face tracking logic
-		face := faces[0]
-		x := face.Rectangle.Min.X + (face.Rectangle.Dx() / 2)
+		face := dets[0][0]
+		x := face.Col
 		vf := fmt.Sprintf("crop=ih*9/16:ih:min(max(x-(iw*9/32),0),w-(iw*9/16)),y,scale=1080:1920,setsar=1")
 		cmd = exec.Command("ffmpeg", "-i", filepath.Join("uploads", videoFile), "-vf", vf, "-ss", start, "-to", end, clipPath)
 		cmd.Args[5] = strings.Replace(cmd.Args[5], "x", strconv.Itoa(x), 1)
