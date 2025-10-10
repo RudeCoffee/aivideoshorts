@@ -342,12 +342,12 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		for i := 0; i < len(avgFacePositions); i++ {
 			xExpr += ")"
 		}
-		vf = fmt.Sprintf("zoompan=z='1.5':x='%s':y='0':d=1,scale=1080:1920,setsar=1", xExpr)
+		vf = fmt.Sprintf("zoompan=z=1.5:x=%s:y=0:d=1:s=1080x1920:fps=30", xExpr)
 	} else {
 		vf = "crop=in_h*9/16:in_h,scale=1080:1920,setsar=1"
 	}
 
-	cmd := exec.Command("ffmpeg", "-y", "-i", filepath.Join("uploads", videoFile), "-vf", vf, "-ss", start, "-to", end, "-t", "5", clipPath)
+	cmd := exec.Command("ffmpeg", "-y", "-i", filepath.Join("uploads", videoFile), "-vf", vf, "-ss", start, "-to", end, clipPath)
 	output, err = cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("ffmpeg error: %s\n%s", err, output)
