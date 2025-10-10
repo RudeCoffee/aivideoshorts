@@ -348,10 +348,22 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 			facePositions = append(facePositions, dims.Width/2)
 		}
 
-		// Smooth the face positions using a simple moving average
-		smoothedPositions := movingAverage(facePositions, 30) // Increased window size
+	}
+
+	if len(facePositions) > 0 {
+		minX := facePositions[0]
+		maxX := facePositions[0]
+		for _, pos := range facePositions {
+			if pos < minX {
+				minX = pos
+			}
+			if pos > maxX {
+				maxX = pos
+			}
+		}
+
 		cropWidth := dims.Height * 9 / 16
-		x := smoothedPositions[len(smoothedPositions)-1] - (cropWidth / 2)
+		x := (minX + maxX) / 2 - cropWidth/2
 
 		if x < 0 {
 			x = 0
@@ -360,19 +372,23 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 			x = dims.Width - cropWidth
 		}
 
-		// Only update the crop if the face has moved a significant distance
-		if i > 0 {
-			lastX := facePositions[i-1] - (cropWidth / 2)
-			if abs(x-lastX) < 10 {
-				x = lastX
+		for i, file := range frameFiles {
+			vf := fmt.Sprintf("crop=%d:%d:%d:0,scale=1080:1920,setsar=1", cropWidth, dims.Height, x)
+			croppedFramePath := filepath.Join(croppedFramesDir, fmt.Sprintf("frame-%04d.png", i))
+			cmd := exec.Command("ffmpeg", "-y", "-i", file, "-vf", vf, croppedFramePath)
+			if err := cmd.Run(); err != nil {
+				log.Printf("Failed to crop frame %s: %s", file, err)
 			}
 		}
-
-		vf := fmt.Sprintf("crop=%d:%d:%d:0,scale=1080:1920,setsar=1", cropWidth, dims.Height, x)
-		croppedFramePath := filepath.Join(croppedFramesDir, fmt.Sprintf("frame-%04d.png", i))
-		cmd := exec.Command("ffmpeg", "-y", "-i", file, "-vf", vf, croppedFramePath)
-		if err := cmd.Run(); err != nil {
-			log.Printf("Failed to crop frame %s: %s", file, err)
+	} else {
+		// Fallback to old logic if no faces are detected
+		for i, file := range frameFiles {
+			vf := fmt.Sprintf("crop=in_h*9/16:in_h,scale=1080:1920,setsar=1")
+			croppedFramePath := filepath.Join(croppedFramesDir, fmt.Sprintf("frame-%04d.png", i))
+			cmd := exec.Command("ffmpeg", "-y", "-i", file, "-vf", vf, croppedFramePath)
+			if err := cmd.Run(); err != nil {
+				log.Printf("Failed to crop frame %s: %s", file, err)
+			}
 		}
 	}
 
