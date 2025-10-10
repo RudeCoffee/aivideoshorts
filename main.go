@@ -324,30 +324,8 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var vf string
-	if len(avgFacePositions) > 0 {
-		var xExpr string
-		for i, pos := range avgFacePositions {
-			x := pos - (dims.Height*9/16)/2
-			if x < 0 {
-				x = 0
-			}
-			if x+dims.Height*9/16 > dims.Width {
-				x = dims.Width - dims.Height*9/16
-			}
-			xExpr += fmt.Sprintf("if(eq(in_frame,%d),%d,", i*30, x)
-		}
-		// Add a fallback value and close the parentheses
-		xExpr += fmt.Sprintf("%d", dims.Width/2)
-		for i := 0; i < len(avgFacePositions); i++ {
-			xExpr += ")"
-		}
-		vf = fmt.Sprintf("zoompan=z=1.5:x=%s:y=0:d=1:s=1080x1920:fps=30", xExpr)
-	} else {
-		vf = "crop=in_h*9/16:in_h,scale=1080:1920,setsar=1"
-	}
-
-	cmd := exec.Command("ffmpeg", "-y", "-i", filepath.Join("uploads", videoFile), "-vf", vf, "-ss", start, "-to", end, clipPath)
+	// Fallback to old logic for now
+	cmd := exec.Command("ffmpeg", "-y", "-i", filepath.Join("uploads", videoFile), "-vf", "crop=in_h*9/16:in_h,scale=1080:1920,setsar=1", "-ss", start, "-to", end, clipPath)
 	output, err = cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("ffmpeg error: %s\n%s", err, output)
