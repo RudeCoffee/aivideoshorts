@@ -338,14 +338,15 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 	smoothedPositions := movingAverage(facePositions, 15)
 	_ = smoothedPositions
 
-	// Generate the sendcmd file
-	cmdFile, err := os.Create(filepath.Join(framesDir, "sendcmd.txt"))
+	// Generate the sendcmd file in the root directory
+	sendcmdPath := "sendcmd.txt"
+	cmdFile, err := os.Create(sendcmdPath)
 	if err != nil {
 		log.Printf("Failed to create sendcmd file: %s", err)
 		http.Error(w, "Failed to create sendcmd file", http.StatusInternalServerError)
 		return
 	}
-	defer cmdFile.Close()
+	defer os.Remove(sendcmdPath) // Clean up the command file
 
 	cropWidth := dims.Height * 9 / 16
 	for i, pos := range smoothedPositions {
@@ -356,11 +357,16 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		if x+cropWidth > dims.Width {
 			x = dims.Width - cropWidth
 		}
-		cmdFile.WriteString(fmt.Sprintf("%d crop x %d\n", i, x))
+		// The time for the command is based on the frame number and the video's frame rate (assuming 30fps)
+		frameTime := float64(i) / 30.0
+		cmdFile.WriteString(fmt.Sprintf("%f crop x %d\n", frameTime, x))
 	}
+	cmdFile.Close() // Close the file to ensure it's written before ffmpeg reads it
 
-	vf := fmt.Sprintf("sendcmd=f=%s,crop=%d:%d,scale=1080:1920,setsar=1", filepath.Join(framesDir, "sendcmd.txt"), cropWidth, dims.Height)
+	vf := fmt.Sprintf("sendcmd=f=%s,crop=w=%d:h=%d,scale=1080:1920,setsar=1", sendcmdPath, cropWidth, dims.Height)
 	cmd := exec.Command("ffmpeg", "-i", filepath.Join("uploads", videoFile), "-vf", vf, "-ss", start, "-to", end, clipPath)
+
+	log.Printf("Executing ffmpeg command: %s", cmd.String())
 	output, err = cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("ffmpeg error: %s\n%s", err, output)
