@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -215,7 +214,7 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cascadeFile, err := ioutil.ReadFile(filepath.Join("cascade", "facefinder"))
+	cascadeFile, err := os.ReadFile(filepath.Join("cascade", "facefinder"))
 	if err != nil {
 		log.Println("Cascade file not found, downloading...")
 		err := os.MkdirAll("cascade", os.ModePerm)
@@ -245,7 +244,7 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Failed to save cascade file", http.StatusInternalServerError)
 			return
 		}
-		cascadeFile, err = ioutil.ReadFile(filepath.Join("cascade", "facefinder"))
+		cascadeFile, err = os.ReadFile(filepath.Join("cascade", "facefinder"))
 		if err != nil {
 			log.Printf("Failed to read cascade file after download: %s", err)
 			http.Error(w, "Failed to read cascade file", http.StatusInternalServerError)
@@ -307,7 +306,7 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		face := dets[0][0]
 		faceCenterX := face.Col
 		cropWidth := dims.Height * 9 / 16
-		x := faceCenterX - cropWidth/2
+		x := faceCenterX - (cropWidth / 2)
 
 		if x < 0 {
 			x = 0
@@ -316,7 +315,7 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 			x = dims.Width - cropWidth
 		}
 
-		vf := fmt.Sprintf("crop=%d:%d:%d:%d,scale=1080:1920,setsar=1", cropWidth, dims.Height, x, 0)
+		vf := fmt.Sprintf("crop=%d:%d:%d:0,scale=1080:1920,setsar=1", cropWidth, dims.Height, x)
 		cmd = exec.Command("ffmpeg", "-i", filepath.Join("uploads", videoFile), "-vf", vf, "-ss", start, "-to", end, clipPath)
 	} else {
 		// Old logic
