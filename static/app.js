@@ -54,59 +54,52 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    clipForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        clipResultDiv.innerHTML = '<p>Creating clip...</p>';
+    const clipButton = clipForm.querySelector('button[type="submit"]');
+    const autoClipButton = document.getElementById('autoclip-button');
+
+    const handleClipRequest = async (url, button) => {
+        button.disabled = true;
+        button.textContent = 'Creating...';
+        clipResultDiv.innerHTML = `<p>Creating clip... This can take a moment.</p>`;
 
         const formData = new FormData(clipForm);
         formData.append('videoFile', videoFile);
 
-        const response = await fetch('/clip', {
-            method: 'POST',
-            body: new URLSearchParams(formData),
-        });
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                body: new URLSearchParams(formData),
+            });
 
-        if (response.ok) {
-            const clipPath = await response.text();
-            clipResultDiv.innerHTML = `
-                <p>Clip created successfully!</p>
-                <video controls width="100%">
-                    <source src="${clipPath}" type="video/mp4">
-                    Your browser does not support the video tag.
-                </video>
-                <a href="${clipPath}" download>Download Clip</a>
-            `;
-        } else {
-            const errorText = await response.text();
-            clipResultDiv.innerHTML = `<p><strong>Error creating clip:</strong> ${errorText}</p>`;
+            if (response.ok) {
+                const clipPath = await response.text();
+                clipResultDiv.innerHTML = `
+                    <p>Clip created successfully!</p>
+                    <video controls width="100%">
+                        <source src="${clipPath}" type="video/mp4">
+                        Your browser does not support the video tag.
+                    </video>
+                    <a href="${clipPath}" download>Download Clip</a>
+                `;
+            } else {
+                const errorText = await response.text();
+                clipResultDiv.innerHTML = `<p><strong>Error creating clip:</strong> ${errorText}</p>`;
+            }
+        } catch (error) {
+            clipResultDiv.innerHTML = `<p><strong>An unexpected error occurred:</strong> ${error.message}</p>`;
+        } finally {
+            button.disabled = false;
+            if(button === clipButton) button.textContent = 'Create Clip';
+            if(button === autoClipButton) button.textContent = 'Auto-Clip for Shorts';
         }
+    };
+
+    clipForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        handleClipRequest('/clip', clipButton);
     });
 
-    const autoClipButton = document.getElementById('autoclip-button');
-    autoClipButton.addEventListener('click', async () => {
-        clipResultDiv.innerHTML = '<p>Creating auto-cropped clip...</p>';
-
-        const formData = new FormData(clipForm);
-        formData.append('videoFile', videoFile);
-
-        const response = await fetch('/autoclip', {
-            method: 'POST',
-            body: new URLSearchParams(formData),
-        });
-
-        if (response.ok) {
-            const clipPath = await response.text();
-            clipResultDiv.innerHTML = `
-                <p>Auto-cropped clip created successfully!</p>
-                <video controls width="100%">
-                    <source src="${clipPath}" type="video/mp4">
-                    Your browser does not support the video tag.
-                </video>
-                <a href="${clipPath}" download>Download Clip</a>
-            `;
-        } else {
-            const errorText = await response.text();
-            clipResultDiv.innerHTML = `<p><strong>Error creating auto-cropped clip:</strong> ${errorText}</p>`;
-        }
+    autoClipButton.addEventListener('click', () => {
+        handleClipRequest('/autoclip', autoClipButton);
     });
 });
