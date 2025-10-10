@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	_ "image"
+	_ "image/png"
 	"io"
 	"log"
 	"net/http"
@@ -13,8 +15,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"image"
-	_ "image/png"
 
 	pigo "github.com/esimov/pigo/core"
 )
@@ -54,8 +54,8 @@ type TranscriptSegment struct {
 
 // UploadResponse is the structure of the JSON response sent after a video upload.
 type UploadResponse struct {
-	Transcript  []TranscriptSegment `json:"transcript"`
-	VideoFile   string              `json:"videoFile"`
+	Transcript []TranscriptSegment `json:"transcript"`
+	VideoFile  string              `json:"videoFile"`
 }
 
 func main() {
