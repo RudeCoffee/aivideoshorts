@@ -358,8 +358,8 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		// The time for the command is based on the frame number and the video's frame rate (assuming 30fps)
 		frameTime := float64(i) / 30.0
-		// Add semicolon and use CRLF line endings for Windows compatibility
-		cmdFile.WriteString(fmt.Sprintf("%f crop x %d;\r\n", frameTime, x))
+		// The command needs to be in the format: <time> <filter> <key> <value>
+		cmdFile.WriteString(fmt.Sprintf("%f crop x %d\n", frameTime, x))
 	}
 	cmdFile.Close() // Close the file to ensure it's written before ffmpeg reads it
 
