@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -12,7 +13,32 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+
+	pigo "github.com/esimov/pigo/core"
 )
+
+func movingAverage(data []int, windowSize int) []int {
+	if windowSize <= 1 {
+		return data
+	}
+	smoothed := make([]int, len(data))
+	for i := range data {
+		start := i - windowSize/2
+		if start < 0 {
+			start = 0
+		}
+		end := i + windowSize/2
+		if end > len(data) {
+			end = len(data)
+		}
+		sum := 0
+		for _, val := range data[start:end] {
+			sum += val
+		}
+		smoothed[i] = sum / (end - start)
+	}
+	return smoothed
+}
 
 // TranscriptSegment represents a single segment of the video transcript.
 type TranscriptSegment struct {
@@ -25,32 +51,6 @@ type TranscriptSegment struct {
 type UploadResponse struct {
 	Transcript  []TranscriptSegment `json:"transcript"`
 	VideoFile   string              `json:"videoFile"`
-}
-
-type videoDimensions struct {
-	Width  int `json:"width"`
-	Height int `json:"height"`
-}
-
-func getVideoDimensions(videoPath string) (*videoDimensions, error) {
-	cmd := exec.Command("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "json", videoPath)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("ffprobe error: %s\n%s", err, output)
-	}
-
-	var data struct {
-		Streams []videoDimensions `json:"streams"`
-	}
-	if err := json.Unmarshal(output, &data); err != nil {
-		return nil, err
-	}
-
-	if len(data.Streams) == 0 {
-		return nil, fmt.Errorf("no video streams found")
-	}
-
-	return &data.Streams[0], nil
 }
 
 func main() {
@@ -252,10 +252,18 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var dets [][]pigo.Detection
+	var facePositions []int
 	frameFiles, err := filepath.Glob(filepath.Join(framesDir, "*.png"))
 	if err != nil {
 		log.Printf("Failed to find frame files: %s", err)
+	}
+
+	p := pigo.NewPigo()
+	// Unpack the binary file. This will return the number of cascade trees,
+	// the tree depth, the threshold and the prediction from tree's leaf nodes.
+	classifier, err := p.Unpack(cascadeFile)
+	if err != nil {
+		log.Fatalf("Error reading the cascade file: %s", err)
 	}
 
 	for _, file := range frameFiles {
@@ -282,45 +290,51 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 			},
 		}
 
-		p := pigo.NewPigo()
-		// Unpack the binary file. This will return the number of cascade trees,
-		// the tree depth, the threshold and the prediction from tree's leaf nodes.
-		classifier, err := p.Unpack(cascadeFile)
-		if err != nil {
-			log.Fatalf("Error reading the cascade file: %s", err)
-		}
-
 		// Run the classifier over the obtained leaf nodes and return the detection results.
 		// The result contains quadruplets representing the row, column, scale and detection score.
 		detections := classifier.RunCascade(cParams, 0.0)
 
 		// Calculate the intersection over union (IoU) of two clusters.
 		detections = classifier.ClusterDetections(detections, 0.2)
-		dets = append(dets, detections)
+
+		if len(detections) > 0 {
+			facePositions = append(facePositions, detections[0].Col)
+		} else if len(facePositions) > 0 {
+			// If no face is detected, use the last known position
+			facePositions = append(facePositions, facePositions[len(facePositions)-1])
+		} else {
+			// If no face has been detected yet, use the center of the frame
+			facePositions = append(facePositions, dims.Width/2)
+		}
 	}
 
-	// Command to crop to 9:16, scale, and maintain aspect ratio
-	var cmd *exec.Cmd
-	if len(dets) > 0 && len(dets[0]) > 0 {
-		// New face tracking logic
-		face := dets[0][0]
-		faceCenterX := face.Col
-		cropWidth := dims.Height * 9 / 16
-		x := faceCenterX - (cropWidth / 2)
+	// Smooth the face positions using a simple moving average
+	smoothedPositions := movingAverage(facePositions, 15)
+	_ = smoothedPositions
 
+	// Generate the sendcmd file
+	cmdFile, err := os.Create(filepath.Join(framesDir, "sendcmd.txt"))
+	if err != nil {
+		log.Printf("Failed to create sendcmd file: %s", err)
+		http.Error(w, "Failed to create sendcmd file", http.StatusInternalServerError)
+		return
+	}
+	defer cmdFile.Close()
+
+	cropWidth := dims.Height * 9 / 16
+	for i, pos := range smoothedPositions {
+		x := pos - (cropWidth / 2)
 		if x < 0 {
 			x = 0
 		}
 		if x+cropWidth > dims.Width {
 			x = dims.Width - cropWidth
 		}
-
-		vf := fmt.Sprintf("crop=%d:%d:%d:0,scale=1080:1920,setsar=1", cropWidth, dims.Height, x)
-		cmd = exec.Command("ffmpeg", "-i", filepath.Join("uploads", videoFile), "-vf", vf, "-ss", start, "-to", end, clipPath)
-	} else {
-		// Old logic
-		cmd = exec.Command("ffmpeg", "-i", filepath.Join("uploads", videoFile), "-vf", "crop=ih*9/16:ih,scale=1080:1920,setsar=1", "-ss", start, "-to", end, clipPath)
+		cmdFile.WriteString(fmt.Sprintf("%d crop x %d\n", i, x))
 	}
+
+	vf := fmt.Sprintf("sendcmd=f=%s,crop=%d:%d,scale=1080:1920,setsar=1", filepath.Join(framesDir, "sendcmd.txt"), cropWidth, dims.Height)
+	cmd := exec.Command("ffmpeg", "-i", filepath.Join("uploads", videoFile), "-vf", vf, "-ss", start, "-to", end, clipPath)
 	output, err = cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("ffmpeg error: %s\n%s", err, output)
