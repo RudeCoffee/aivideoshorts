@@ -349,7 +349,7 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Use the clipped VTT file for subtitles
 	subtitlePath := filepath.ToSlash(clippedVTTPath)
-	cmd := exec.Command("ffmpeg", "-y", "-i", filepath.Join("uploads", videoFile), "-vf", "crop=in_h*9/16:in_h,scale=1080:1920,setsar=1,subtitles="+subtitlePath+":force_style='Alignment=10,FontName=Arial,FontSize=18,PrimaryColour=&Hffffff&,BackColor=&H80000000&,BorderStyle=1,Outline=1,Shadow=0,MarginV=480'", "-ss", start, "-to", end, clipPath)
+	cmd := exec.Command("ffmpeg", "-y", "-i", filepath.Join("uploads", videoFile), "-vf", "crop=in_h*9/16:in_h,scale=1080:1920,setsar=1,subtitles="+subtitlePath+":force_style=Alignment=2,FontName=Arial,FontSize=18,PrimaryColour=&Hffffff&,BackColor=&H80000000&,BorderStyle=1,Outline=1,Shadow=0,MarginV=150", "-ss", start, "-to", end, clipPath)
 	output, err = cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("ffmpeg error: %s\n%s", err, output)
