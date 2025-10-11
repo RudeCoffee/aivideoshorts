@@ -324,33 +324,11 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Fallback to old logic for now
-	originalVTTPath := filepath.Join("uploads", strings.TrimSuffix(videoFile, filepath.Ext(videoFile))+".vtt")
-
-	startFloat, err := strconv.ParseFloat(start, 64)
-	if err != nil {
-		http.Error(w, "Invalid start time", http.StatusBadRequest)
-		return
-	}
-	endFloat, err := strconv.ParseFloat(end, 64)
-	if err != nil {
-		http.Error(w, "Invalid end time", http.StatusBadRequest)
-		return
-	}
-
-	clippedVTTPath, err := createClippedVTT(originalVTTPath, startFloat, endFloat)
-	if err != nil {
-		log.Printf("Failed to create clipped VTT: %s", err)
-		http.Error(w, "Failed to create clipped VTT", http.StatusInternalServerError)
-		return
-	}
-	defer os.Remove(clippedVTTPath)
-	defer os.Remove(originalVTTPath)
-
-	// Use the clipped VTT file for subtitles
-	subtitlePath := filepath.ToSlash(clippedVTTPath)
-	styleStr := "force_style=Alignment=2\\,FontName=Arial\\,FontSize=18\\,PrimaryColour=&Hffffff\\,BackColor=&H80000000\\,BorderStyle=1\\,Outline=1\\,Shadow=0\\,MarginV=150"
-	cmd := exec.Command("ffmpeg", "-y", "-i", filepath.Join("uploads", videoFile), "-vf", "crop=in_h*9/16:in_h,scale=1080:1920,setsar=1,subtitles="+subtitlePath+":"+styleStr, "-ss", start, "-to", end, clipPath)
+	// Use the original VTT file directly. ffmpeg will handle the timestamps.
+	subtitlePath := filepath.ToSlash(filepath.Join("uploads", strings.TrimSuffix(videoFile, filepath.Ext(videoFile))+".vtt"))
+	defer os.Remove(subtitlePath) // Clean up the VTT file after the clip is created
+	vf_string := fmt.Sprintf("crop=in_h*9/16:in_h,scale=1080:1920,setsar=1,subtitles=%s:force_style='Alignment=2,FontName=Arial,FontSize=18,PrimaryColour=&Hffffff,BackColor=&H80000000,BorderStyle=1,Outline=1,Shadow=0,MarginV=150'", strings.ReplaceAll(subtitlePath, "\\", "/"))
+	cmd := exec.Command("ffmpeg", "-y", "-i", filepath.Join("uploads", videoFile), "-vf", vf_string, "-ss", start, "-to", end, clipPath)
 	output, err = cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("ffmpeg error: %s\n%s", err, output)
@@ -438,64 +416,6 @@ func parseVTT(vttPath string) ([]TranscriptSegment, error) {
 	}
 
 	return segments, nil
-}
-
-func formatVTTTimestamp(t float64) string {
-	hours := int(t / 3600)
-	minutes := int((t - float64(hours*3600)) / 60)
-	seconds := t - float64(hours*3600) - float64(minutes*60)
-	// Format to HH:MM:SS.mmm, ensuring seconds are handled correctly
-	return fmt.Sprintf("%02d:%02d:%06.3f", hours, minutes, seconds)
-}
-
-func createClippedVTT(originalVTTPath string, clipStart, clipEnd float64) (string, error) {
-	segments, err := parseVTT(originalVTTPath)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse original VTT: %w", err)
-	}
-
-	clippedVTTPath := strings.Replace(originalVTTPath, ".vtt", "_clipped.vtt", 1)
-	file, err := os.Create(clippedVTTPath)
-	if err != nil {
-		return "", fmt.Errorf("failed to create clipped VTT file: %w", err)
-	}
-	defer file.Close()
-
-	writer := bufio.NewWriter(file)
-	_, err = writer.WriteString("WEBVTT\n\n")
-	if err != nil {
-		return "", err
-	}
-
-	for _, segment := range segments {
-		// Check if the segment overlaps with the clip duration
-		if segment.End > clipStart && segment.Start < clipEnd {
-			// Adjust timestamps to be relative to the clip's start time
-			newStart := segment.Start - clipStart
-			newEnd := segment.End - clipStart
-
-			// Ensure timestamps are not negative
-			if newStart < 0 {
-				newStart = 0
-			}
-
-			// Format adjusted timestamps
-			startTS := formatVTTTimestamp(newStart)
-			endTS := formatVTTTimestamp(newEnd)
-
-			// Write the adjusted segment to the new VTT file
-			_, err = writer.WriteString(fmt.Sprintf("%s --> %s\n%s\n\n", startTS, endTS, segment.Text))
-			if err != nil {
-				return "", err
-			}
-		}
-	}
-
-	if err := writer.Flush(); err != nil {
-		return "", err
-	}
-
-	return clippedVTTPath, nil
 }
 
 func getEnv(key, fallback string) string {
