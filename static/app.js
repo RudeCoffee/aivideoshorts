@@ -57,21 +57,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const clipButton = clipForm.querySelector('button[type="submit"]');
     const autoClipButton = document.getElementById('autoclip-button');
 
-    const handleClipRequest = async (url, button, isAutoClip = false) => {
+    const handleClipRequest = async (url, button, form) => {
         button.disabled = true;
         button.textContent = 'Creating...';
         clipResultDiv.innerHTML = `<p>Creating clip... This can take a moment.</p>`;
 
-        const formData = new FormData(clipForm);
+        const formData = new FormData(form);
         formData.append('videoFile', videoFile);
+        // Copy start and end times from the main clip form
+        formData.append('start', document.getElementById('start').value);
+        formData.append('end', document.getElementById('end').value);
 
-        // For auto-clip, also append alignment and margin
-        if (isAutoClip) {
-            const alignment = document.getElementById('alignment').value;
-            const marginV = document.getElementById('marginV').value;
-            formData.append('alignment', alignment);
-            formData.append('marginV', marginV);
-        }
 
         try {
             const response = await fetch(url, {
@@ -104,7 +100,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     clipForm.addEventListener('submit', (e) => {
         e.preventDefault();
-        handleClipRequest('/clip', clipButton);
+        handleClipRequest('/clip', clipButton, clipForm);
+    });
+
+    const autoClipForm = document.getElementById('autoclip-form');
+    autoClipButton.addEventListener('click', () => {
+        handleClipRequest('/autoclip', autoClipButton, autoClipForm);
     });
 
     function updateClipTimes() {
@@ -127,8 +128,4 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('end').value = '';
         }
     }
-
-    autoClipButton.addEventListener('click', () => {
-        handleClipRequest('/autoclip', autoClipButton, true);
-    });
 });
