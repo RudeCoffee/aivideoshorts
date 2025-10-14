@@ -64,9 +64,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const formData = new FormData(form);
         formData.append('videoFile', videoFile);
-        // Copy start and end times from the main clip form
-        formData.append('start', document.getElementById('start').value);
-        formData.append('end', document.getElementById('end').value);
+        if (form.id === 'autoclip-form') {
+            formData.append('start', document.getElementById('start').value);
+            formData.append('end', document.getElementById('end').value);
+        }
 
 
         try {
