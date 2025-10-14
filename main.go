@@ -327,7 +327,7 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 	// Use the original VTT file directly. ffmpeg will handle the timestamps.
 	subtitlePath := filepath.ToSlash(filepath.Join("uploads", strings.TrimSuffix(videoFile, filepath.Ext(videoFile))+".vtt"))
 	defer os.Remove(subtitlePath) // Clean up the VTT file after the clip is created
-	vf_string := fmt.Sprintf("crop=in_h*9/16:in_h,scale=1080:1920,setsar=1,subtitles=%s:force_style='Alignment=2\\,FontName=Arial\\,FontSize=18\\,PrimaryColour=&Hffffff\\,BackColor=&H80000000\\,BorderStyle=1\\,Outline=1\\,Shadow=0\\,MarginV=150'", strings.ReplaceAll(subtitlePath, "\\", "/"))
+	vf_string := fmt.Sprintf("crop=in_h*9/16:in_h,scale=1080:1920,setsar=1,subtitles=%s:force_style='Alignment=2\\,FontName=Arial\\,FontSize=18\\,PrimaryColour=&Hffffff\\,BackColor=&H80000000\\,BorderStyle=1\\,Outline=1\\,Shadow=0\\,MarginV=50'", strings.ReplaceAll(subtitlePath, "\\", "/"))
 	cmd := exec.Command("ffmpeg", "-y", "-i", filepath.Join("uploads", videoFile), "-vf", vf_string, "-ss", start, "-to", end, clipPath)
 	output, err = cmd.CombinedOutput()
 	if err != nil {
