@@ -111,6 +111,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function updateClipTimes() {
         const selected = transcriptDiv.querySelectorAll('p.selected');
+        const startInput = document.getElementById('start');
+        const endInput = document.getElementById('end');
+
         if (selected.length > 0) {
             let minStart = selected[0].dataset.start;
             let maxEnd = selected[0].dataset.end;
@@ -122,11 +125,15 @@ document.addEventListener('DOMContentLoaded', () => {
                     maxEnd = p.dataset.end;
                 }
             });
-            document.getElementById('start').value = minStart;
-            document.getElementById('end').value = maxEnd;
+            startInput.value = minStart;
+            endInput.value = maxEnd;
+            clipButton.disabled = false;
+            autoClipButton.disabled = false;
         } else {
-            document.getElementById('start').value = '';
-            document.getElementById('end').value = '';
+            startInput.value = '';
+            endInput.value = '';
+            clipButton.disabled = true;
+            autoClipButton.disabled = true;
         }
     }
 });
