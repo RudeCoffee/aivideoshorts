@@ -57,21 +57,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const clipButton = clipForm.querySelector('button[type="submit"]');
     const autoClipButton = document.getElementById('autoclip-button');
 
-    const handleClipRequest = async (url, button, isAutoClip = false) => {
+    const handleClipRequest = async (url, button, form) => {
         button.disabled = true;
         button.textContent = 'Creating...';
         clipResultDiv.innerHTML = `<p>Creating clip... This can take a moment.</p>`;
 
-        const formData = new FormData(clipForm);
+        const formData = new FormData(form);
         formData.append('videoFile', videoFile);
-
-        // For auto-clip, also append alignment and margin
-        if (isAutoClip) {
-            const alignment = document.getElementById('alignment').value;
-            const marginV = document.getElementById('marginV').value;
-            formData.append('alignment', alignment);
-            formData.append('marginV', marginV);
+        if (form.id === 'autoclip-form') {
+            formData.append('start', document.getElementById('start').value);
+            formData.append('end', document.getElementById('end').value);
         }
+
 
         try {
             const response = await fetch(url, {
@@ -104,11 +101,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
     clipForm.addEventListener('submit', (e) => {
         e.preventDefault();
-        handleClipRequest('/clip', clipButton);
+        handleClipRequest('/clip', clipButton, clipForm);
+    });
+
+    const autoClipForm = document.getElementById('autoclip-form');
+    autoClipButton.addEventListener('click', () => {
+        handleClipRequest('/autoclip', autoClipButton, autoClipForm);
     });
 
     function updateClipTimes() {
         const selected = transcriptDiv.querySelectorAll('p.selected');
+        const startInput = document.getElementById('start');
+        const endInput = document.getElementById('end');
+
         if (selected.length > 0) {
             let minStart = selected[0].dataset.start;
             let maxEnd = selected[0].dataset.end;
@@ -120,15 +125,15 @@ document.addEventListener('DOMContentLoaded', () => {
                     maxEnd = p.dataset.end;
                 }
             });
-            document.getElementById('start').value = minStart;
-            document.getElementById('end').value = maxEnd;
+            startInput.value = minStart;
+            endInput.value = maxEnd;
+            clipButton.disabled = false;
+            autoClipButton.disabled = false;
         } else {
-            document.getElementById('start').value = '';
-            document.getElementById('end').value = '';
+            startInput.value = '';
+            endInput.value = '';
+            clipButton.disabled = true;
+            autoClipButton.disabled = true;
         }
     }
-
-    autoClipButton.addEventListener('click', () => {
-        handleClipRequest('/autoclip', autoClipButton, true);
-    });
 });

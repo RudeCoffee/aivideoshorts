@@ -159,7 +159,7 @@ func clipHandler(w http.ResponseWriter, r *http.Request) {
 	clipFile := fmt.Sprintf("clip-%s-%s-%s", start, end, videoFile)
 	clipPath := filepath.Join("static", clipFile)
 
-	cmd := exec.Command("ffmpeg", "-i", filepath.Join("uploads", videoFile), "-ss", start, "-to", end, "-c:v", "copy", "-c:a", "aac", "-af", "loudnorm", clipPath)
+	cmd := exec.Command("ffmpeg", "-i", filepath.Join("uploads", videoFile), "-ss", start, "-to", end, "-c:v", "copy", "-c:a", "aac", "-af", "loudnorm", "-threads", "0", clipPath)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("ffmpeg error: %s\n%s", err, output)
@@ -331,7 +331,7 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 	defer os.Remove(subtitlePath) // Clean up the VTT file after the clip is created
 	forceStyle := fmt.Sprintf("Alignment=%s\\,FontName=Arial\\,FontSize=18\\,PrimaryColour=&Hffffff\\,BackColor=&H80000000\\,BorderStyle=1\\,Outline=1\\,Shadow=0\\,MarginV=%s", alignment, marginV)
 	vf_string := fmt.Sprintf("crop=in_h*9/16:in_h,scale=1080:1920,setsar=1,subtitles=%s:force_style='%s'", strings.ReplaceAll(subtitlePath, "\\", "/"), forceStyle)
-	cmd := exec.Command("ffmpeg", "-y", "-i", filepath.Join("uploads", videoFile), "-vf", vf_string, "-c:a", "aac", "-af", "loudnorm", "-ss", start, "-to", end, clipPath)
+	cmd := exec.Command("ffmpeg", "-y", "-ss", start, "-to", end, "-i", filepath.Join("uploads", videoFile), "-vf", vf_string, "-c:a", "aac", "-af", "loudnorm", "-threads", "0", clipPath)
 	output, err = cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("ffmpeg error: %s\n%s", err, output)

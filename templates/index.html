@@ -24,8 +24,12 @@
         <input type="text" id="start" name="start" placeholder="00:00:00">
         <label for="end">End Time:</label>
         <input type="text" id="end" name="end" placeholder="00:00:00">
-        <button type="submit">Create Clip</button>
-        <br><br>
+        <button type="submit" disabled>Create Clip</button>
+    </form>
+    <hr>
+    <h2>Auto-Clip for Shorts</h2>
+    <form id="autoclip-form">
+        <p><i>Note: Subtitle settings only apply to Auto-Clips.</i></p>
         <label for="alignment">Subtitle Alignment:</label>
         <select id="alignment" name="alignment">
             <option value="2" selected>Bottom-Center</option>
@@ -33,7 +37,7 @@
         </select>
         <label for="marginV">Vertical Margin:</label>
         <input type="number" id="marginV" name="marginV" value="50" min="0">
-        <button type="button" id="autoclip-button">Auto-Clip for Shorts</button>
+        <button type="button" id="autoclip-button" disabled>Auto-Clip for Shorts</button>
     </form>
     <hr>
     <h2>Clip Result</h2>
