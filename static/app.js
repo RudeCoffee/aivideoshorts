@@ -57,13 +57,21 @@ document.addEventListener('DOMContentLoaded', () => {
     const clipButton = clipForm.querySelector('button[type="submit"]');
     const autoClipButton = document.getElementById('autoclip-button');
 
-    const handleClipRequest = async (url, button) => {
+    const handleClipRequest = async (url, button, isAutoClip = false) => {
         button.disabled = true;
         button.textContent = 'Creating...';
         clipResultDiv.innerHTML = `<p>Creating clip... This can take a moment.</p>`;
 
         const formData = new FormData(clipForm);
         formData.append('videoFile', videoFile);
+
+        // For auto-clip, also append alignment and margin
+        if (isAutoClip) {
+            const alignment = document.getElementById('alignment').value;
+            const marginV = document.getElementById('marginV').value;
+            formData.append('alignment', alignment);
+            formData.append('marginV', marginV);
+        }
 
         try {
             const response = await fetch(url, {
@@ -121,6 +129,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     autoClipButton.addEventListener('click', () => {
-        handleClipRequest('/autoclip', autoClipButton);
+        handleClipRequest('/autoclip', autoClipButton, true);
     });
 });
