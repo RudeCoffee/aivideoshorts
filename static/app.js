@@ -8,7 +8,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const firstFrameImg = document.getElementById('first-frame');
     const cropMarker = document.getElementById('crop-marker');
     let videoFile = '';
-    let cropX = -1, cropY = -1;
+    let cropX = -1;
 
     uploadForm.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -105,7 +105,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     cropContainer.style.display = 'block';
                     cropMarker.style.display = 'none';
                     cropX = -1;
-                    cropY = -1;
                 } else {
                     console.error('Failed to fetch first frame');
                     cropContainer.style.display = 'none';
@@ -141,25 +140,19 @@ document.addEventListener('DOMContentLoaded', () => {
         const y = e.clientY - rect.top;
 
         const naturalWidth = firstFrameImg.naturalWidth;
-        const naturalHeight = firstFrameImg.naturalHeight;
         const displayWidth = rect.width;
-        const displayHeight = rect.height;
 
         cropX = Math.round((x / displayWidth) * naturalWidth);
-        cropY = Math.round((y / displayHeight) * naturalHeight);
 
         cropMarker.style.left = `${x}px`;
         cropMarker.style.top = `${y}px`;
         cropMarker.style.display = 'block';
-
-        console.log(`Crop position set to: x=${cropX}, y=${cropY}`);
     });
 
     document.getElementById('autoclip-button').addEventListener('click', () => {
         const extraData = {};
-        if (cropX !== -1 && cropY !== -1) {
+        if (cropX !== -1) {
             extraData.cropX = cropX;
-            extraData.cropY = cropY;
         }
         handleClipRequest('/autoclip', document.getElementById('autoclip-button'), extraData);
     });

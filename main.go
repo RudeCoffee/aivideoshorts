@@ -186,7 +186,6 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 	end := r.FormValue("end")
 	videoFile := r.FormValue("videoFile")
 	cropXStr := r.FormValue("cropX")
-	cropYStr := r.FormValue("cropY")
 
 	if start == "" || end == "" || videoFile == "" {
 		http.Error(w, "Missing required form values: start, end, and videoFile", http.StatusBadRequest)
@@ -204,17 +203,15 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cropWidth := dims.Height * 9 / 16
-	var cropX, cropY int
+	var cropX int
 
-	if cropXStr != "" && cropYStr != "" {
-		manualCropX, errX := strconv.Atoi(cropXStr)
-		manualCropY, errY := strconv.Atoi(cropYStr)
-		if errX != nil || errY != nil {
-			http.Error(w, "Invalid crop values", http.StatusBadRequest)
+	if cropXStr != "" {
+		manualCropX, err := strconv.Atoi(cropXStr)
+		if err != nil {
+			http.Error(w, "Invalid cropX value", http.StatusBadRequest)
 			return
 		}
 		cropX = manualCropX - (cropWidth / 2)
-		cropY = manualCropY - (dims.Height / 2)
 	} else {
 		// Fallback to face detection
 		frameDir := filepath.Join("uploads", "first_frame")
@@ -297,22 +294,16 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Clamp cropX and cropY to ensure it's within video bounds
+	// Clamp cropX to ensure it's within video bounds
 	if cropX < 0 {
 		cropX = 0
 	}
 	if cropX+cropWidth > dims.Width {
 		cropX = dims.Width - cropWidth
 	}
-	if cropY < 0 {
-		cropY = 0
-	}
-	if cropY+dims.Height > dims.Height {
-		cropY = 0 //This is not a typo, if the crop height is the same as the video height, y must be 0
-	}
 
 	subtitlePath := filepath.ToSlash(filepath.Join("uploads", strings.TrimSuffix(videoFile, filepath.Ext(videoFile))+".vtt"))
-	vf_string := fmt.Sprintf("crop=%d:%d:%d:%d,scale=1080:1920,setsar=1,subtitles=%s:force_style='Alignment=2\\,FontName=Arial\\,FontSize=18\\,PrimaryColour=&Hffffff\\,BackColor=&H80000000\\,BorderStyle=1\\,Outline=1\\,Shadow=0\\,MarginV=50'", cropWidth, dims.Height, cropX, cropY, strings.ReplaceAll(subtitlePath, "\\", "/"))
+	vf_string := fmt.Sprintf("crop=%d:%d:%d:0,scale=1080:1920,setsar=1,subtitles=%s:force_style='Alignment=2\\,FontName=Arial\\,FontSize=18\\,PrimaryColour=&Hffffff\\,BackColor=&H80000000\\,BorderStyle=1\\,Outline=1\\,Shadow=0\\,MarginV=50'", cropWidth, dims.Height, cropX, strings.ReplaceAll(subtitlePath, "\\", "/"))
 	cmd := exec.Command("ffmpeg", "-y", "-i", filepath.Join("uploads", videoFile), "-vf", vf_string, "-c:a", "aac", "-af", "loudnorm", "-ss", start, "-to", end, clipPath)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
