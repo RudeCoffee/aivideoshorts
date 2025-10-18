@@ -73,6 +73,7 @@ func main() {
 	http.HandleFunc("/upload", uploadHandler)
 	http.HandleFunc("/clip", clipHandler)
 	http.HandleFunc("/autoclip", autoClipHandler)
+	http.HandleFunc("/first-frame", firstFrameHandler)
 
 	log.Println("Starting server on :8080")
 	if err := http.ListenAndServe(":8080", nil); err != nil {
@@ -184,17 +185,17 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 	start := r.FormValue("start")
 	end := r.FormValue("end")
 	videoFile := r.FormValue("videoFile")
+	cropXStr := r.FormValue("cropX")
+	cropYStr := r.FormValue("cropY")
 
 	if start == "" || end == "" || videoFile == "" {
 		http.Error(w, "Missing required form values: start, end, and videoFile", http.StatusBadRequest)
 		return
 	}
 
-	// Create a unique name for the clip
 	clipFile := fmt.Sprintf("autoclip-%s-%s-%s", start, end, videoFile)
 	clipPath := filepath.Join("static", clipFile)
 
-	// Get video dimensions
 	dims, err := getVideoDimensions(filepath.Join("uploads", videoFile))
 	if err != nil {
 		log.Printf("Failed to get video dimensions: %s", err)
@@ -202,121 +203,118 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create a temporary directory to store the first frame
-	frameDir := filepath.Join("uploads", "first_frame")
-	if err := os.MkdirAll(frameDir, os.ModePerm); err != nil {
-		http.Error(w, "Failed to create frame directory", http.StatusInternalServerError)
-		return
-	}
-	defer os.RemoveAll(frameDir)
-
-	// Extract the first frame of the clip
-	firstFramePath := filepath.Join(frameDir, "first_frame.png")
-	cmdFrame := exec.Command("ffmpeg", "-y", "-i", filepath.Join("uploads", videoFile), "-ss", start, "-vframes", "1", firstFramePath)
-	output, err := cmdFrame.CombinedOutput()
-	if err != nil {
-		log.Printf("ffmpeg error extracting first frame: %s\n%s", err, output)
-		http.Error(w, fmt.Sprintf("Failed to extract first frame: %s", output), http.StatusInternalServerError)
-		return
-	}
-
-	cascadeFile, err := os.ReadFile(filepath.Join("cascade", "facefinder"))
-	if err != nil {
-		log.Println("Cascade file not found, downloading...")
-		err := os.MkdirAll("cascade", os.ModePerm)
-		if err != nil {
-			http.Error(w, "Failed to create cascade directory", http.StatusInternalServerError)
-			return
-		}
-		url := "https://github.com/esimov/pigo/raw/master/cascade/facefinder"
-		resp, err := http.Get(url)
-		if err != nil {
-			log.Printf("Failed to download cascade file: %s", err)
-			http.Error(w, "Failed to download cascade file", http.StatusInternalServerError)
-			return
-		}
-		defer resp.Body.Close()
-
-		out, err := os.Create(filepath.Join("cascade", "facefinder"))
-		if err != nil {
-			log.Printf("Failed to create cascade file: %s", err)
-			http.Error(w, "Failed to create cascade file", http.StatusInternalServerError)
-			return
-		}
-		defer out.Close()
-		_, err = io.Copy(out, resp.Body)
-		if err != nil {
-			log.Printf("Failed to save cascade file: %s", err)
-			http.Error(w, "Failed to save cascade file", http.StatusInternalServerError)
-			return
-		}
-		cascadeFile, err = os.ReadFile(filepath.Join("cascade", "facefinder"))
-		if err != nil {
-			log.Printf("Failed to read cascade file after download: %s", err)
-			http.Error(w, "Failed to read cascade file", http.StatusInternalServerError)
-			return
-		}
-	}
-
-	p := pigo.NewPigo()
-	// Unpack the binary file. This will return the number of cascade trees,
-	// the tree depth, the threshold and the prediction from tree's leaf nodes.
-	classifier, err := p.Unpack(cascadeFile)
-	if err != nil {
-		log.Fatalf("Error reading the cascade file: %s", err)
-	}
-
-	src, err := pigo.GetImage(filepath.ToSlash(firstFramePath))
-	if err != nil {
-		log.Printf("Cannot open the image file: %v", err)
-	}
-
-	// Default to a centered crop
 	cropWidth := dims.Height * 9 / 16
-	cropX := (dims.Width - cropWidth) / 2
+	var cropX, cropY int
 
-	if err == nil { // if pigo.GetImage was successful
-		pixels := pigo.RgbToGrayscale(src)
-		cols, rows := src.Bounds().Max.X, src.Bounds().Max.Y
+	if cropXStr != "" && cropYStr != "" {
+		manualCropX, errX := strconv.Atoi(cropXStr)
+		manualCropY, errY := strconv.Atoi(cropYStr)
+		if errX != nil || errY != nil {
+			http.Error(w, "Invalid crop values", http.StatusBadRequest)
+			return
+		}
+		cropX = manualCropX - (cropWidth / 2)
+		cropY = manualCropY - (dims.Height / 2)
+	} else {
+		// Fallback to face detection
+		frameDir := filepath.Join("uploads", "first_frame")
+		if err := os.MkdirAll(frameDir, os.ModePerm); err != nil {
+			http.Error(w, "Failed to create frame directory", http.StatusInternalServerError)
+			return
+		}
+		defer os.RemoveAll(frameDir)
 
-		cParams := pigo.CascadeParams{
-			MinSize:     20,
-			MaxSize:     1000,
-			ShiftFactor: 0.1,
-			ScaleFactor: 1.1,
-
-			ImageParams: pigo.ImageParams{
-				Pixels: pixels,
-				Rows:   rows,
-				Cols:   cols,
-				Dim:    cols,
-			},
+		firstFramePath := filepath.Join(frameDir, "first_frame.png")
+		cmdFrame := exec.Command("ffmpeg", "-y", "-i", filepath.Join("uploads", videoFile), "-ss", start, "-vframes", "1", firstFramePath)
+		output, err := cmdFrame.CombinedOutput()
+		if err != nil {
+			log.Printf("ffmpeg error extracting first frame: %s\n%s", err, output)
+			http.Error(w, fmt.Sprintf("Failed to extract first frame: %s", output), http.StatusInternalServerError)
+			return
 		}
 
-		// Run the classifier over the obtained leaf nodes and return the detection results.
-		detections := classifier.RunCascade(cParams, 0.0)
-		// Calculate the intersection over union (IoU) of two clusters.
-		detections = classifier.ClusterDetections(detections, 0.2)
-
-		if len(detections) > 0 {
-			// Center the crop on the first detected face
-			faceX := detections[0].Col
-			cropX = faceX - (cropWidth / 2)
-
-			// Clamp cropX to ensure it's within video bounds
-			if cropX < 0 {
-				cropX = 0
+		cascadeFile, err := os.ReadFile(filepath.Join("cascade", "facefinder"))
+		if err != nil {
+			// Handle cascade file download as before
+			url := "https://github.com/esimov/pigo/raw/master/cascade/facefinder"
+			resp, err := http.Get(url)
+			if err != nil {
+				log.Printf("Failed to download cascade file: %s", err)
+				http.Error(w, "Failed to download cascade file", http.StatusInternalServerError)
+				return
 			}
-			if cropX+cropWidth > dims.Width {
-				cropX = dims.Width - cropWidth
+			defer resp.Body.Close()
+			out, err := os.Create(filepath.Join("cascade", "facefinder"))
+			if err != nil {
+				log.Printf("Failed to create cascade file: %s", err)
+				http.Error(w, "Failed to create cascade file", http.StatusInternalServerError)
+				return
+			}
+			defer out.Close()
+			_, err = io.Copy(out, resp.Body)
+			if err != nil {
+				log.Printf("Failed to save cascade file: %s", err)
+				http.Error(w, "Failed to save cascade file", http.StatusInternalServerError)
+				return
+			}
+			cascadeFile, err = os.ReadFile(filepath.Join("cascade", "facefinder"))
+			if err != nil {
+				log.Printf("Failed to read cascade file after download: %s", err)
+				http.Error(w, "Failed to read cascade file", http.StatusInternalServerError)
+				return
 			}
 		}
+
+		p := pigo.NewPigo()
+		classifier, err := p.Unpack(cascadeFile)
+		if err != nil {
+			log.Fatalf("Error reading the cascade file: %s", err)
+		}
+
+		src, err := pigo.GetImage(filepath.ToSlash(firstFramePath))
+		if err != nil {
+			log.Printf("Cannot open the image file: %v", err)
+			cropX = (dims.Width - cropWidth) / 2 // Default to center
+		} else {
+			pixels := pigo.RgbToGrayscale(src)
+			cols, rows := src.Bounds().Max.X, src.Bounds().Max.Y
+			cParams := pigo.CascadeParams{
+				MinSize:     20,
+				MaxSize:     1000,
+				ShiftFactor: 0.1,
+				ScaleFactor: 1.1,
+				ImageParams: pigo.ImageParams{Pixels: pixels, Rows: rows, Cols: cols, Dim: cols},
+			}
+			detections := classifier.RunCascade(cParams, 0.0)
+			detections = classifier.ClusterDetections(detections, 0.2)
+
+			if len(detections) > 0 {
+				faceX := detections[0].Col
+				cropX = faceX - (cropWidth / 2)
+			} else {
+				cropX = (dims.Width - cropWidth) / 2 // Default to center
+			}
+		}
+	}
+
+	// Clamp cropX and cropY to ensure it's within video bounds
+	if cropX < 0 {
+		cropX = 0
+	}
+	if cropX+cropWidth > dims.Width {
+		cropX = dims.Width - cropWidth
+	}
+	if cropY < 0 {
+		cropY = 0
+	}
+	if cropY+dims.Height > dims.Height {
+		cropY = 0 //This is not a typo, if the crop height is the same as the video height, y must be 0
 	}
 
 	subtitlePath := filepath.ToSlash(filepath.Join("uploads", strings.TrimSuffix(videoFile, filepath.Ext(videoFile))+".vtt"))
-	vf_string := fmt.Sprintf("crop=%d:%d:%d:0,scale=1080:1920,setsar=1,subtitles=%s:force_style='Alignment=2\\,FontName=Arial\\,FontSize=18\\,PrimaryColour=&Hffffff\\,BackColor=&H80000000\\,BorderStyle=1\\,Outline=1\\,Shadow=0\\,MarginV=50'", cropWidth, dims.Height, cropX, strings.ReplaceAll(subtitlePath, "\\", "/"))
+	vf_string := fmt.Sprintf("crop=%d:%d:%d:%d,scale=1080:1920,setsar=1,subtitles=%s:force_style='Alignment=2\\,FontName=Arial\\,FontSize=18\\,PrimaryColour=&Hffffff\\,BackColor=&H80000000\\,BorderStyle=1\\,Outline=1\\,Shadow=0\\,MarginV=50'", cropWidth, dims.Height, cropX, cropY, strings.ReplaceAll(subtitlePath, "\\", "/"))
 	cmd := exec.Command("ffmpeg", "-y", "-i", filepath.Join("uploads", videoFile), "-vf", vf_string, "-c:a", "aac", "-af", "loudnorm", "-ss", start, "-to", end, clipPath)
-	output, err = cmd.CombinedOutput()
+	output, err := cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("ffmpeg error: %s\n%s", err, output)
 		http.Error(w, fmt.Sprintf("Failed to create clip: %s", output), http.StatusInternalServerError)
@@ -324,6 +322,35 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fmt.Fprintf(w, "/static/%s", clipFile)
+}
+
+func firstFrameHandler(w http.ResponseWriter, r *http.Request) {
+	videoFile := r.URL.Query().Get("videoFile")
+	start := r.URL.Query().Get("start")
+
+	if videoFile == "" || start == "" {
+		http.Error(w, "Missing required query parameters: videoFile and start", http.StatusBadRequest)
+		return
+	}
+
+	frameDir := filepath.Join("static", "frames")
+	if err := os.MkdirAll(frameDir, os.ModePerm); err != nil {
+		http.Error(w, "Failed to create frame directory", http.StatusInternalServerError)
+		return
+	}
+
+	framePath := filepath.Join(frameDir, fmt.Sprintf("first-frame-%s.png", start))
+	// Use -y to overwrite existing frame, helpful for dev
+	cmd := exec.Command("ffmpeg", "-y", "-i", filepath.Join("uploads", videoFile), "-ss", start, "-vframes", "1", framePath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("ffmpeg error extracting first frame: %s\n%s", err, output)
+		http.Error(w, fmt.Sprintf("Failed to extract first frame: %s", output), http.StatusInternalServerError)
+		return
+	}
+
+	// Return the path to the frame so the frontend can display it
+	fmt.Fprintf(w, "/%s", filepath.ToSlash(framePath))
 }
 
 func parseVTTTimestamp(ts string) (float64, error) {

@@ -9,7 +9,8 @@
 <body>
     <h1>Video Clipper</h1>
     <form id="upload-form" action="/upload" method="post" enctype="multipart/form-data">
-        <input type="file" name="video" accept="video/*" required>
+        <label for="video-upload">Select video:</label>
+        <input id="video-upload" type="file" name="video" accept="video/*" required>
         <button type="submit">Upload and Transcribe</button>
     </form>
     <hr>
@@ -24,9 +25,16 @@
         <input type="text" id="start" name="start" placeholder="00:00:00">
         <label for="end">End Time:</label>
         <input type="text" id="end" name="end" placeholder="00:00:00">
+        <button type="button" id="get-frame-button">Get First Frame</button>
         <button type="submit">Create Clip</button>
         <button type="button" id="autoclip-button">Auto-Clip for Shorts</button>
     </form>
+    <div id="crop-container" style="display:none; position: relative; margin-top: 10px;">
+        <h3>Manual Crop Selection</h3>
+        <p>Click on the frame to set the center of the crop.</p>
+        <img id="first-frame" src="" alt="First frame of clip" style="max-width: 100%; cursor: crosshair;">
+        <div id="crop-marker" style="position: absolute; width: 10px; height: 10px; background-color: red; border-radius: 50%; transform: translate(-50%, -50%); display: none;"></div>
+    </div>
     <hr>
     <h2>Clip Result</h2>
     <div id="clip-result"></div>
