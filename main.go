@@ -15,8 +15,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-
-	pigo "github.com/esimov/pigo/core"
 )
 
 type videoDimensions struct {
@@ -72,7 +70,7 @@ func main() {
 	})
 	http.HandleFunc("/upload", uploadHandler)
 	http.HandleFunc("/clip", clipHandler)
-	http.HandleFunc("/autoclip", autoClipHandler)
+	http.HandleFunc("/extract-frame", extractFrameHandler)
 
 	log.Println("Starting server on :8080")
 	if err := http.ListenAndServe(":8080", nil); err != nil {
@@ -149,6 +147,10 @@ func clipHandler(w http.ResponseWriter, r *http.Request) {
 	start := r.FormValue("start")
 	end := r.FormValue("end")
 	videoFile := r.FormValue("videoFile")
+	cropX := r.FormValue("cropX")
+	cropY := r.FormValue("cropY")
+	cropWidth := r.FormValue("cropWidth")
+	cropHeight := r.FormValue("cropHeight")
 
 	if start == "" || end == "" || videoFile == "" {
 		http.Error(w, "Missing required form values: start, end, and videoFile", http.StatusBadRequest)
@@ -159,7 +161,16 @@ func clipHandler(w http.ResponseWriter, r *http.Request) {
 	clipFile := fmt.Sprintf("clip-%s-%s-%s", start, end, videoFile)
 	clipPath := filepath.Join("static", clipFile)
 
-	cmd := exec.Command("ffmpeg", "-i", filepath.Join("uploads", videoFile), "-ss", start, "-to", end, "-c:v", "copy", "-c:a", "aac", "-af", "loudnorm", clipPath)
+	var cmd *exec.Cmd
+	if cropWidth != "" && cropHeight != "" && cropX != "" && cropY != "" {
+		// Manual crop
+		vf_string := fmt.Sprintf("crop=%s:%s:%s:%s,scale=1080:1920,setsar=1", cropWidth, cropHeight, cropX, cropY)
+		cmd = exec.Command("ffmpeg", "-y", "-i", filepath.Join("uploads", videoFile), "-vf", vf_string, "-c:a", "aac", "-af", "loudnorm", "-ss", start, "-to", end, clipPath)
+	} else {
+		// No crop, just cut
+		cmd = exec.Command("ffmpeg", "-i", filepath.Join("uploads", videoFile), "-ss", start, "-to", end, "-c:v", "copy", "-c:a", "aac", "-af", "loudnorm", clipPath)
+	}
+
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("ffmpeg error: %s\n%s", err, output)
@@ -170,11 +181,41 @@ func clipHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "/static/%s", clipFile)
 }
 
-func autoClipHandler(w http.ResponseWriter, r *http.Request) {
+func extractFrameHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Failed to parse form", http.StatusBadRequest)
+		return
+	}
+
+	videoFile := r.FormValue("videoFile")
+	start := r.FormValue("start")
+
+	if videoFile == "" || start == "" {
+		http.Error(w, "Missing required form values: videoFile and start", http.StatusBadRequest)
+		return
+	}
+
+	frameDir := filepath.Join("static", "frames")
+	if _, err := os.Stat(frameDir); os.IsNotExist(err) {
+		os.Mkdir(frameDir, os.ModeDir)
+	}
+
+	framePath := filepath.Join(frameDir, fmt.Sprintf("frame-%s.png", videoFile))
+	cmd := exec.Command("ffmpeg", "-y", "-i", filepath.Join("uploads", videoFile), "-ss", start, "-vframes", "1", framePath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("ffmpeg error extracting frame: %s\n%s", err, output)
+		http.Error(w, fmt.Sprintf("Failed to extract frame: %s", output), http.StatusInternalServerError)
+		return
+	}
+
+	fmt.Fprintf(w, "/%s", filepath.ToSlash(framePath))
+}
 
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "Failed to parse form", http.StatusBadRequest)

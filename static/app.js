@@ -4,7 +4,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const transcriptDiv = document.getElementById('transcript');
     const clipForm = document.getElementById('clip-form');
     const clipResultDiv = document.getElementById('clip-result');
+    const cropModal = document.getElementById('crop-modal');
+    const cropImage = document.getElementById('crop-image');
+    const confirmCropButton = document.getElementById('confirm-crop-button');
     let videoFile = '';
+    let cropper;
+    let cropData;
 
     uploadForm.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -57,13 +62,19 @@ document.addEventListener('DOMContentLoaded', () => {
     const clipButton = clipForm.querySelector('button[type="submit"]');
     const autoClipButton = document.getElementById('autoclip-button');
 
-    const handleClipRequest = async (url, button) => {
+    const handleClipRequest = async (url, button, cropData) => {
         button.disabled = true;
         button.textContent = 'Creating...';
         clipResultDiv.innerHTML = `<p>Creating clip... This can take a moment.</p>`;
 
         const formData = new FormData(clipForm);
         formData.append('videoFile', videoFile);
+        if (cropData) {
+            formData.append('cropX', cropData.x);
+            formData.append('cropY', cropData.y);
+            formData.append('cropWidth', cropData.width);
+            formData.append('cropHeight', cropData.height);
+        }
 
         try {
             const response = await fetch(url, {
@@ -94,9 +105,60 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    clipForm.addEventListener('submit', (e) => {
+    clipForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        handleClipRequest('/clip', clipButton);
+        const start = document.getElementById('start').value;
+        if (!start) {
+            alert('Please select a start time from the transcript.');
+            return;
+        }
+
+        // Show loading indicator
+        clipResultDiv.innerHTML = '<p>Extracting frame for cropping...</p>';
+
+        try {
+            // 1. Request the first frame for cropping
+            const frameResponse = await fetch('/extract-frame', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({
+                    videoFile: videoFile,
+                    start: start,
+                }),
+            });
+
+            if (!frameResponse.ok) {
+                const errorText = await frameResponse.text();
+                clipResultDiv.innerHTML = `<p><strong>Error extracting frame:</strong> ${errorText}</p>`;
+                return;
+            }
+
+            const framePath = await frameResponse.text();
+
+            // 2. Show the modal and initialize Cropper.js
+            cropImage.src = framePath;
+            cropModal.style.display = 'block';
+            if (cropper) {
+                cropper.destroy();
+            }
+            cropper = new Cropper(cropImage, {
+                aspectRatio: 9 / 16,
+                viewMode: 1,
+                autoCropArea: 0.8
+            });
+
+        } catch (error) {
+            clipResultDiv.innerHTML = `<p><strong>An unexpected error occurred while extracting the frame:</strong> ${error.message}</p>`;
+        }
+    });
+
+    confirmCropButton.addEventListener('click', () => {
+        if (cropper) {
+            cropData = cropper.getData(true); // Get rounded crop data
+            cropModal.style.display = 'none';
+            cropper.destroy();
+            handleClipRequest('/clip', clipButton, cropData);
+        }
     });
 
     function updateClipTimes() {

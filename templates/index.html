@@ -5,8 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Video Clipper</title>
     <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.12/cropper.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.12/cropper.min.js"></script>
 </head>
 <body>
+    <div id="crop-modal" style="display:none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 100;">
+        <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 20px;">
+            <h2>Crop Video</h2>
+            <div>
+                <img id="crop-image" src="" style="max-width: 100%;">
+            </div>
+            <button id="confirm-crop-button">Confirm Crop</button>
+        </div>
+    </div>
     <h1>Video Clipper</h1>
     <form id="upload-form" action="/upload" method="post" enctype="multipart/form-data">
         <input type="file" name="video" accept="video/*" required>
@@ -25,7 +36,6 @@
         <label for="end">End Time:</label>
         <input type="text" id="end" name="end" placeholder="00:00:00">
         <button type="submit">Create Clip</button>
-        <button type="button" id="autoclip-button">Auto-Clip for Shorts</button>
     </form>
     <hr>
     <h2>Clip Result</h2>
