@@ -202,20 +202,21 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create a temporary directory to store frames
-	framesDir := filepath.Join("uploads", "frames")
-	if err := os.MkdirAll(framesDir, os.ModePerm); err != nil {
-		http.Error(w, "Failed to create frames directory", http.StatusInternalServerError)
+	// Create a temporary directory to store the first frame
+	frameDir := filepath.Join("uploads", "first_frame")
+	if err := os.MkdirAll(frameDir, os.ModePerm); err != nil {
+		http.Error(w, "Failed to create frame directory", http.StatusInternalServerError)
 		return
 	}
-	defer os.RemoveAll(framesDir)
+	defer os.RemoveAll(frameDir)
 
-	// Extract frames from the video
-	cmdFrames := exec.Command("ffmpeg", "-i", filepath.Join("uploads", videoFile), "-ss", start, "-to", end, filepath.Join(framesDir, "frame-%04d.png"))
-	output, err := cmdFrames.CombinedOutput()
+	// Extract the first frame of the clip
+	firstFramePath := filepath.Join(frameDir, "first_frame.png")
+	cmdFrame := exec.Command("ffmpeg", "-y", "-i", filepath.Join("uploads", videoFile), "-ss", start, "-vframes", "1", firstFramePath)
+	output, err := cmdFrame.CombinedOutput()
 	if err != nil {
-		log.Printf("ffmpeg error: %s\n%s", err, output)
-		http.Error(w, fmt.Sprintf("Failed to extract frames: %s", output), http.StatusInternalServerError)
+		log.Printf("ffmpeg error extracting first frame: %s\n%s", err, output)
+		http.Error(w, fmt.Sprintf("Failed to extract first frame: %s", output), http.StatusInternalServerError)
 		return
 	}
 
@@ -257,12 +258,6 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var facePositionsBySecond = make(map[int][]int)
-	frameFiles, err := filepath.Glob(filepath.Join(framesDir, "*.png"))
-	if err != nil {
-		log.Printf("Failed to find frame files: %s", err)
-	}
-
 	p := pigo.NewPigo()
 	// Unpack the binary file. This will return the number of cascade trees,
 	// the tree depth, the threshold and the prediction from tree's leaf nodes.
@@ -271,13 +266,16 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		log.Fatalf("Error reading the cascade file: %s", err)
 	}
 
-	for i, file := range frameFiles {
-		src, err := pigo.GetImage(filepath.ToSlash(file))
-		if err != nil {
-			log.Printf("Cannot open the image file: %v", err)
-			continue
-		}
+	src, err := pigo.GetImage(filepath.ToSlash(firstFramePath))
+	if err != nil {
+		log.Printf("Cannot open the image file: %v", err)
+	}
 
+	// Default to a centered crop
+	cropWidth := dims.Height * 9 / 16
+	cropX := (dims.Width - cropWidth) / 2
+
+	if err == nil { // if pigo.GetImage was successful
 		pixels := pigo.RgbToGrayscale(src)
 		cols, rows := src.Bounds().Max.X, src.Bounds().Max.Y
 
@@ -296,38 +294,27 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Run the classifier over the obtained leaf nodes and return the detection results.
-		// The result contains quadruplets representing the row, column, scale and detection score.
 		detections := classifier.RunCascade(cParams, 0.0)
-
 		// Calculate the intersection over union (IoU) of two clusters.
 		detections = classifier.ClusterDetections(detections, 0.2)
 
-		second := i / 30 // Assuming 30fps
 		if len(detections) > 0 {
-			facePositionsBySecond[second] = append(facePositionsBySecond[second], detections[0].Col)
-		}
-	}
+			// Center the crop on the first detected face
+			faceX := detections[0].Col
+			cropX = faceX - (cropWidth / 2)
 
-	var avgFacePositions []int
-	for i := 0; i < len(frameFiles)/30; i++ {
-		positions := facePositionsBySecond[i]
-		if len(positions) > 0 {
-			sum := 0
-			for _, pos := range positions {
-				sum += pos
+			// Clamp cropX to ensure it's within video bounds
+			if cropX < 0 {
+				cropX = 0
 			}
-			avgFacePositions = append(avgFacePositions, sum/len(positions))
-		} else if len(avgFacePositions) > 0 {
-			avgFacePositions = append(avgFacePositions, avgFacePositions[len(avgFacePositions)-1])
-		} else {
-			avgFacePositions = append(avgFacePositions, dims.Width/2)
+			if cropX+cropWidth > dims.Width {
+				cropX = dims.Width - cropWidth
+			}
 		}
 	}
 
-	// Use the original VTT file directly. ffmpeg will handle the timestamps.
 	subtitlePath := filepath.ToSlash(filepath.Join("uploads", strings.TrimSuffix(videoFile, filepath.Ext(videoFile))+".vtt"))
-	// defer os.Remove(subtitlePath) // Clean up the VTT file after the clip is created, (in testing, if this is acctive i can't make more than one clip)
-	vf_string := fmt.Sprintf("crop=in_h*9/16:in_h,scale=1080:1920,setsar=1,subtitles=%s:force_style='Alignment=2\\,FontName=Arial\\,FontSize=18\\,PrimaryColour=&Hffffff\\,BackColor=&H80000000\\,BorderStyle=1\\,Outline=1\\,Shadow=0\\,MarginV=50'", strings.ReplaceAll(subtitlePath, "\\", "/"))
+	vf_string := fmt.Sprintf("crop=%d:%d:%d:0,scale=1080:1920,setsar=1,subtitles=%s:force_style='Alignment=2\\,FontName=Arial\\,FontSize=18\\,PrimaryColour=&Hffffff\\,BackColor=&H80000000\\,BorderStyle=1\\,Outline=1\\,Shadow=0\\,MarginV=50'", cropWidth, dims.Height, cropX, strings.ReplaceAll(subtitlePath, "\\", "/"))
 	cmd := exec.Command("ffmpeg", "-y", "-i", filepath.Join("uploads", videoFile), "-vf", vf_string, "-c:a", "aac", "-af", "loudnorm", "-ss", start, "-to", end, clipPath)
 	output, err = cmd.CombinedOutput()
 	if err != nil {
