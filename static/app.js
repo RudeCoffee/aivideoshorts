@@ -131,7 +131,6 @@ document.addEventListener('DOMContentLoaded', () => {
             startInput.value = '';
             endInput.value = '';
         }
-        fetchAndShowFirstFrame();
     }
 
     document.getElementById('get-frame-button').addEventListener('click', fetchAndShowFirstFrame);
