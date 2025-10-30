@@ -372,14 +372,14 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Smooth face detections
-		smoothedDetections := smoothFaceDetections(faceDetections, 15)
+		smoothedDetections := smoothFaceDetections(faceDetections, 30)
 
 		type CropKeyframe struct {
 			Frame int
 			CropX int
 		}
 		var keyframes []CropKeyframe
-		safeZoneThreshold := int(float64(cropWidth) * 0.15)
+		safeZoneThreshold := int(float64(cropWidth) * 0.3) // Increased safe zone
 
 		if len(smoothedDetections) > 0 {
 			currentCropX := smoothedDetections[0].X - (cropWidth / 2)
@@ -391,8 +391,11 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 
 				if delta > safeZoneThreshold || delta < -safeZoneThreshold {
 					newCropX := detection.X - (cropWidth / 2)
-					keyframes = append(keyframes, CropKeyframe{Frame: detection.Frame, CropX: newCropX})
-					currentCropX = newCropX
+					// Ensure there's a change in frames to avoid division by zero
+					if detection.Frame > keyframes[len(keyframes)-1].Frame {
+						keyframes = append(keyframes, CropKeyframe{Frame: detection.Frame, CropX: newCropX})
+						currentCropX = newCropX
+					}
 				}
 			}
 		}
@@ -412,8 +415,11 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 			endFrame := keyframes[i+1].Frame
 			startX := keyframes[i].CropX
 			endX := keyframes[i+1].CropX
-			expr := fmt.Sprintf("if(between(in_frame,%d,%d),lerp(%d,%d,(in_frame-%d)/(%d-%d)),", startFrame, endFrame, startX, endX, startFrame, endFrame, startFrame)
-			zoompanExpressions = append(zoompanExpressions, expr)
+			// Safeguard against division by zero
+			if endFrame > startFrame {
+				expr := fmt.Sprintf("if(between(in_frame,%d,%d),lerp(%d,%d,(in_frame-%d)/(%d-%d)),", startFrame, endFrame, startX, endX, startFrame, endFrame, startFrame)
+				zoompanExpressions = append(zoompanExpressions, expr)
+			}
 		}
 
 		var xExpr string
