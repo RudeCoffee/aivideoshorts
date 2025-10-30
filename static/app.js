@@ -82,8 +82,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function loadClipPreview(start, end) {
         if (videoFile && start && end) {
-            const clipPath = `/clip-preview?videoFile=${encodeURIComponent(videoFile)}&start=${start}&end=${end}`;
-            clipPreview.src = clipPath;
+            clipPreview.src = `/uploads/${videoFile}`;
+            clipPreview.currentTime = parseFloat(start);
             keyframes = [];
             updateKeyframesDisplay();
             manualClipButton.disabled = true;

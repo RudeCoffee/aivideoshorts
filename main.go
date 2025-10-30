@@ -45,40 +45,6 @@ func getVideoDimensions(videoPath string) (*videoDimensions, error) {
 	return &data.Streams[0], nil
 }
 
-func getVideoFrameRate(videoPath string) (float64, error) {
-	cmd := exec.Command("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=r_frame_rate", "-of", "default=noprint_wrappers=1:nokey=1", videoPath)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return 0, fmt.Errorf("ffprobe error getting frame rate: %s\n%s", err, output)
-	}
-
-	trimmedOutput := strings.TrimSpace(string(output))
-	parts := strings.Split(trimmedOutput, "/")
-	if len(parts) == 1 {
-		rate, err := strconv.ParseFloat(trimmedOutput, 64)
-		if err != nil {
-			return 0, fmt.Errorf("could not parse frame rate: %s", trimmedOutput)
-		}
-		return rate, nil
-	}
-	if len(parts) == 2 {
-		num, err := strconv.ParseFloat(parts[0], 64)
-		if err != nil {
-			return 0, err
-		}
-		den, err := strconv.ParseFloat(parts[1], 64)
-		if err != nil {
-			return 0, err
-		}
-		if den == 0 {
-			return 0, fmt.Errorf("invalid frame rate denominator")
-		}
-		return num / den, nil
-	}
-
-	return 0, fmt.Errorf("unexpected frame rate format: %s", trimmedOutput)
-}
-
 // TranscriptSegment represents a single segment of the video transcript.
 type TranscriptSegment struct {
 	Start float64 `json:"start"`
@@ -98,8 +64,11 @@ func main() {
 		log.Fatal("ffmpeg is not installed or not in the system's PATH.")
 	}
 
-	fs := http.FileServer(http.Dir("static"))
-	http.Handle("/static/", http.StripPrefix("/static/", fs))
+	fsStatic := http.FileServer(http.Dir("static"))
+	http.Handle("/static/", http.StripPrefix("/static/", fsStatic))
+
+	fsUploads := http.FileServer(http.Dir("uploads"))
+	http.Handle("/uploads/", http.StripPrefix("/uploads/", fsUploads))
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "templates/index.html")
@@ -108,8 +77,6 @@ func main() {
 	http.HandleFunc("/clip", clipHandler)
 	http.HandleFunc("/autoclip", autoClipHandler)
 	http.HandleFunc("/first-frame", firstFrameHandler)
-	http.HandleFunc("/clip-preview", clipPreviewHandler)
-	http.HandleFunc("/manual-clip", manualClipHandler)
 
 	log.Println("Starting server on :8080")
 	if err := http.ListenAndServe(":8080", nil); err != nil {
@@ -378,118 +345,6 @@ func firstFrameHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Return the path to the frame so the frontend can display it
 	fmt.Fprintf(w, "/%s", filepath.ToSlash(framePath))
-}
-
-func manualClipHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "Failed to parse form", http.StatusBadRequest)
-		return
-	}
-
-	start := r.FormValue("start")
-	end := r.FormValue("end")
-	videoFile := r.FormValue("videoFile")
-	keyframesJSON := r.FormValue("keyframes")
-
-	if start == "" || end == "" || videoFile == "" || keyframesJSON == "" {
-		http.Error(w, "Missing required form values", http.StatusBadRequest)
-		return
-	}
-
-	type Keyframe struct {
-		Time  float64 `json:"time"`
-		CropX int     `json:"cropX"`
-	}
-	var keyframes []Keyframe
-	if err := json.Unmarshal([]byte(keyframesJSON), &keyframes); err != nil {
-		http.Error(w, "Invalid keyframes data", http.StatusBadRequest)
-		return
-	}
-
-	dims, err := getVideoDimensions(filepath.Join("uploads", videoFile))
-	if err != nil {
-		log.Printf("Failed to get video dimensions: %s", err)
-		http.Error(w, "Failed to get video dimensions", http.StatusInternalServerError)
-		return
-	}
-
-	cropWidth := dims.Height * 9 / 16
-	frameRate, err := getVideoFrameRate(filepath.Join("uploads", videoFile))
-	if err != nil {
-		log.Printf("Failed to get frame rate: %s", err)
-		http.Error(w, "Failed to get frame rate", http.StatusInternalServerError)
-		return
-	}
-
-	var zoompanExpressions []string
-	for i := 0; i < len(keyframes)-1; i++ {
-		startKf := keyframes[i]
-		endKf := keyframes[i+1]
-		startFrame := int(startKf.Time * frameRate)
-		endFrame := int(endKf.Time * frameRate)
-		startX := startKf.CropX - (cropWidth / 2)
-		endX := endKf.CropX - (cropWidth / 2)
-
-		if endFrame > startFrame {
-			expr := fmt.Sprintf("if(between(in_frame,%d,%d),lerp(%d,%d,(in_frame-%d)/(%d-%d)),", startFrame, endFrame, startX, endX, startFrame, endFrame, startFrame)
-			zoompanExpressions = append(zoompanExpressions, expr)
-		}
-	}
-
-	var xExpr string
-	if len(zoompanExpressions) > 0 {
-		xExpr = strings.Join(zoompanExpressions, "") + fmt.Sprintf("%d", keyframes[len(keyframes)-1].CropX-(cropWidth/2)) + strings.Repeat(")", len(zoompanExpressions))
-	} else if len(keyframes) == 1 {
-		xExpr = fmt.Sprintf("%d", keyframes[0].CropX-(cropWidth/2))
-	} else {
-		xExpr = fmt.Sprintf("%d", (dims.Width-cropWidth)/2)
-	}
-
-	zoompanFilter := fmt.Sprintf("zoompan=z=1:x='%s':y=0:d=1:s=%dx%d:fps=%f", xExpr, cropWidth, dims.Height, frameRate)
-
-	clipFile := fmt.Sprintf("manualclip-%s-%s-%s", start, end, videoFile)
-	clipPath := filepath.Join("static", clipFile)
-	subtitlePath := filepath.ToSlash(filepath.Join("uploads", strings.TrimSuffix(videoFile, filepath.Ext(videoFile))+".vtt"))
-	vf_string := fmt.Sprintf("%s,scale=1080:1920,setsar=1,subtitles=%s:force_style='Alignment=2\\,FontName=Arial\\,FontSize=18\\,PrimaryColour=&Hffffff\\,BackColor=&H80000000\\,BorderStyle=1\\,Outline=1\\,Shadow=0\\,MarginV=50'", zoompanFilter, strings.ReplaceAll(subtitlePath, "\\", "/"))
-
-	cmd := exec.Command("ffmpeg", "-y", "-ss", start, "-to", end, "-i", filepath.Join("uploads", videoFile), "-vf", vf_string, "-c:a", "aac", "-af", "loudnorm", clipPath)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		log.Printf("ffmpeg error: %s\n%s", err, output)
-		http.Error(w, fmt.Sprintf("Failed to create clip: %s", output), http.StatusInternalServerError)
-		return
-	}
-
-	fmt.Fprintf(w, "/static/%s", clipFile)
-}
-
-func clipPreviewHandler(w http.ResponseWriter, r *http.Request) {
-	videoFile := r.URL.Query().Get("videoFile")
-	if videoFile == "" {
-		http.Error(w, "Missing required query parameter: videoFile", http.StatusBadRequest)
-		return
-	}
-
-	videoPath := filepath.Join("uploads", videoFile)
-	file, err := os.Open(videoPath)
-	if err != nil {
-		http.Error(w, "File not found", http.StatusNotFound)
-		return
-	}
-	defer file.Close()
-
-	fi, err := file.Stat()
-	if err != nil {
-		http.Error(w, "Failed to get file info", http.StatusInternalServerError)
-		return
-	}
-
-	http.ServeContent(w, r, fi.Name(), fi.ModTime(), file)
 }
 
 func parseVTTTimestamp(ts string) (float64, error) {
