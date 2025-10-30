@@ -4,19 +4,22 @@ document.addEventListener('DOMContentLoaded', () => {
     const transcriptDiv = document.getElementById('transcript');
     const clipForm = document.getElementById('clip-form');
     const clipResultDiv = document.getElementById('clip-result');
-    const cropContainer = document.getElementById('crop-container');
-    const firstFrameImg = document.getElementById('first-frame');
-    const cropMarker = document.getElementById('crop-marker');
-    let videoFile = '';
-    let cropX = -1;
+    const manualClippingControls = document.getElementById('manual-clipping-controls');
+    const clipPreview = document.getElementById('clip-preview');
+    const keyframesDisplay = document.getElementById('keyframes-display');
+    const manualClipButton = document.getElementById('manual-clip-button');
 
+    let videoFile = '';
+    let keyframes = [];
+
+    // --- Upload and Transcription ---
     uploadForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         uploadButton.disabled = true;
         uploadButton.textContent = 'Transcribing...';
         transcriptDiv.innerHTML = '<p>Transcription in progress...</p>';
         clipResultDiv.innerHTML = '';
-        cropContainer.style.display = 'none';
+        manualClippingControls.style.display = 'none';
 
         const formData = new FormData(uploadForm);
         try {
@@ -24,22 +27,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (response.ok) {
                 const data = await response.json();
                 videoFile = data.videoFile;
-                transcriptDiv.innerHTML = '';
-                if (data.transcript && data.transcript.length > 0) {
-                    data.transcript.forEach(segment => {
-                        const p = document.createElement('p');
-                        p.textContent = segment.text;
-                        p.dataset.start = segment.start;
-                        p.dataset.end = segment.end;
-                        p.addEventListener('click', () => {
-                            p.classList.toggle('selected');
-                            updateClipTimes();
-                        });
-                        transcriptDiv.appendChild(p);
-                    });
-                } else {
-                    transcriptDiv.innerHTML = '<p>No speech detected.</p>';
-                }
+                displayTranscript(data.transcript);
             } else {
                 const errorText = await response.text();
                 transcriptDiv.innerHTML = `<p><strong>Error:</strong> ${errorText}</p>`;
@@ -52,6 +40,104 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    function displayTranscript(transcript) {
+        transcriptDiv.innerHTML = '';
+        if (transcript && transcript.length > 0) {
+            transcript.forEach(segment => {
+                const p = document.createElement('p');
+                p.textContent = `[${formatTime(segment.start)} - ${formatTime(segment.end)}] ${segment.text}`;
+                p.dataset.start = segment.start;
+                p.dataset.end = segment.end;
+                p.addEventListener('click', () => {
+                    p.classList.toggle('selected');
+                    updateClipSelection();
+                });
+                transcriptDiv.appendChild(p);
+            });
+        } else {
+            transcriptDiv.innerHTML = '<p>No speech detected.</p>';
+        }
+    }
+
+    // --- Clip Selection and Preview ---
+    function updateClipSelection() {
+        const selected = Array.from(transcriptDiv.querySelectorAll('p.selected'));
+        if (selected.length > 0) {
+            selected.sort((a, b) => parseFloat(a.dataset.start) - parseFloat(b.dataset.start));
+            const startTime = selected[0].dataset.start;
+            const endTime = selected[selected.length - 1].dataset.end;
+
+            document.getElementById('start').value = startTime;
+            document.getElementById('end').value = endTime;
+
+            loadClipPreview(startTime, endTime);
+            manualClippingControls.style.display = 'block';
+        } else {
+            document.getElementById('start').value = '';
+            document.getElementById('end').value = '';
+            manualClippingControls.style.display = 'none';
+            clipPreview.src = '';
+        }
+    }
+
+    function loadClipPreview(start, end) {
+        if (videoFile && start && end) {
+            const clipPath = `/clip-preview?videoFile=${encodeURIComponent(videoFile)}&start=${start}&end=${end}`;
+            clipPreview.src = clipPath;
+            keyframes = [];
+            updateKeyframesDisplay();
+            manualClipButton.disabled = true;
+        }
+    }
+
+    // --- Keyframe Logic ---
+    clipPreview.addEventListener('click', (e) => {
+        const rect = clipPreview.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const naturalWidth = clipPreview.videoWidth;
+        const displayWidth = rect.width;
+
+        // Calculate the x-coordinate relative to the video's actual size
+        const cropX = Math.round((x / displayWidth) * naturalWidth);
+        const time = clipPreview.currentTime;
+
+        // Add or update a keyframe
+        const existingKeyframeIndex = keyframes.findIndex(kf => Math.abs(kf.time - time) < 0.1); // Check if a keyframe exists around this time
+        if (existingKeyframeIndex > -1) {
+            keyframes[existingKeyframeIndex].cropX = cropX;
+        } else {
+            keyframes.push({ time, cropX });
+        }
+
+        keyframes.sort((a, b) => a.time - b.time);
+        updateKeyframesDisplay();
+        manualClipButton.disabled = keyframes.length === 0;
+    });
+
+    function updateKeyframesDisplay() {
+        keyframesDisplay.innerHTML = '<h4>Keyframes:</h4>';
+        if (keyframes.length > 0) {
+            const ol = document.createElement('ol');
+            keyframes.forEach((kf, index) => {
+                const li = document.createElement('li');
+                li.textContent = `Time: ${kf.time.toFixed(2)}s, CropX: ${kf.cropX}`;
+                const removeBtn = document.createElement('button');
+                removeBtn.textContent = 'Remove';
+                removeBtn.onclick = () => {
+                    keyframes.splice(index, 1);
+                    updateKeyframesDisplay();
+                    manualClipButton.disabled = keyframes.length === 0;
+                };
+                li.appendChild(removeBtn);
+                ol.appendChild(li);
+            });
+            keyframesDisplay.appendChild(ol);
+        } else {
+            keyframesDisplay.innerHTML += '<p>Click on the video at different times to set crop keyframes.</p>';
+        }
+    }
+
+    // --- Clip Generation ---
     const handleClipRequest = async (url, button, extraFormData = {}) => {
         button.disabled = true;
         button.textContent = 'Creating...';
@@ -71,7 +157,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     <p>Clip created!</p>
                     <video controls width="100%"><source src="${clipPath}" type="video/mp4"></video>
                     <a href="${clipPath}" download>Download Clip</a>`;
-                cropContainer.style.display = 'none';
             } else {
                 const errorText = await response.text();
                 clipResultDiv.innerHTML = `<p><strong>Error:</strong> ${errorText}</p>`;
@@ -80,7 +165,10 @@ document.addEventListener('DOMContentLoaded', () => {
             clipResultDiv.innerHTML = `<p><strong>Error:</strong> ${error.message}</p>`;
         } finally {
             button.disabled = false;
-            button.textContent = button.id === 'autoclip-button' ? 'Auto-Clip for Shorts' : 'Create Clip';
+            // Restore original button text
+            if(button.id === 'manual-clip-button') button.textContent = 'Generate Manual Clip';
+            else if(button.id === 'autoclip-button') button.textContent = 'Auto-Clip for Shorts';
+            else button.textContent = 'Create Standard Clip';
         }
     };
 
@@ -89,71 +177,25 @@ document.addEventListener('DOMContentLoaded', () => {
         handleClipRequest('/clip', clipForm.querySelector('button[type="submit"]'));
     });
 
-    const startInput = document.getElementById('start');
-    const endInput = document.getElementById('end');
-
-    async function fetchAndShowFirstFrame() {
-        const start = startInput.value;
-        const end = endInput.value;
-
-        if (videoFile && start && end && parseFloat(start) < parseFloat(end)) {
-            try {
-                const response = await fetch(`/first-frame?videoFile=${videoFile}&start=${start}`);
-                if (response.ok) {
-                    const framePath = await response.text();
-                    firstFrameImg.src = framePath + `?t=${new Date().getTime()}`; // bust cache
-                    cropContainer.style.display = 'block';
-                    cropMarker.style.display = 'none';
-                    cropX = -1;
-                } else {
-                    console.error('Failed to fetch first frame');
-                    cropContainer.style.display = 'none';
-                }
-            } catch (error) {
-                console.error('Error fetching first frame:', error);
-                cropContainer.style.display = 'none';
-            }
-        } else {
-            cropContainer.style.display = 'none';
-        }
-    }
-
-    function updateClipTimes() {
-        const selected = Array.from(transcriptDiv.querySelectorAll('p.selected'));
-        if (selected.length > 0) {
-            selected.sort((a, b) => a.dataset.start - b.dataset.start);
-            const minStart = selected[0].dataset.start;
-            const maxEnd = selected[selected.length - 1].dataset.end;
-            startInput.value = minStart;
-            endInput.value = maxEnd;
-        } else {
-            startInput.value = '';
-            endInput.value = '';
-        }
-    }
-
-    document.getElementById('get-frame-button').addEventListener('click', fetchAndShowFirstFrame);
-
-    firstFrameImg.addEventListener('click', (e) => {
-        const rect = firstFrameImg.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-
-        const naturalWidth = firstFrameImg.naturalWidth;
-        const displayWidth = rect.width;
-
-        cropX = Math.round((x / displayWidth) * naturalWidth);
-
-        cropMarker.style.left = `${x}px`;
-        cropMarker.style.top = `${y}px`;
-        cropMarker.style.display = 'block';
+    document.getElementById('autoclip-button').addEventListener('click', (e) => {
+        handleClipRequest('/autoclip', e.target);
     });
 
-    document.getElementById('autoclip-button').addEventListener('click', () => {
-        const extraData = {};
-        if (cropX !== -1) {
-            extraData.cropX = cropX;
+    manualClipButton.addEventListener('click', () => {
+        if (keyframes.length < 1) {
+            alert('Please set at least one keyframe.');
+            return;
         }
-        handleClipRequest('/autoclip', document.getElementById('autoclip-button'), extraData);
+        const extraData = {
+            keyframes: JSON.stringify(keyframes),
+        };
+        handleClipRequest('/manual-clip', manualClipButton, extraData);
     });
+
+    // --- Utility Functions ---
+    function formatTime(seconds) {
+        const date = new Date(null);
+        date.setSeconds(seconds);
+        return date.toISOString().substr(11, 8);
+    }
 });

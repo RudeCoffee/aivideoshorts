@@ -22,23 +22,28 @@
     <h2>Create Clip</h2>
     <form id="clip-form">
         <label for="start">Start Time:</label>
-        <input type="text" id="start" name="start" placeholder="00:00:00">
+        <input type="text" id="start" name="start" placeholder="00:00:00" readonly>
         <label for="end">End Time:</label>
-        <input type="text" id="end" name="end" placeholder="00:00:00">
-        <button type="button" id="get-frame-button">Get First Frame</button>
-        <button type="submit">Create Clip</button>
+        <input type="text" id="end" name="end" placeholder="00:00:00" readonly>
+        <button type="submit">Create Standard Clip</button>
         <button type="button" id="autoclip-button">Auto-Clip for Shorts</button>
     </form>
-    <div id="crop-container" style="display:none; position: relative; margin-top: 10px;">
-        <h3>Manual Crop Selection</h3>
-        <p>Click on the frame to set the center of the crop.</p>
-        <img id="first-frame" src="" alt="First frame of clip" style="max-width: 100%; cursor: crosshair;">
-        <div id="crop-marker" style="position: absolute; width: 10px; height: 10px; background-color: red; border-radius: 50%; transform: translate(-50%, -50%); display: none;"></div>
+
+    <div id="manual-clipping-controls" style="display:none;">
+        <hr>
+        <h2>Manual Keyframe Clipping</h2>
+        <p>Select a portion of the transcript above to load the video preview.</p>
+        <div id="video-preview-container" style="position: relative; margin-top: 10px;">
+            <video id="clip-preview" style="max-width: 100%; cursor: crosshair;" controls></video>
+            <div id="keyframes-display" style="margin-top: 10px;"></div>
+        </div>
+        <button type="button" id="manual-clip-button" disabled>Generate Manual Clip</button>
     </div>
+
     <hr>
     <h2>Clip Result</h2>
     <div id="clip-result"></div>
 
-    <script src="/static/app.js?v=1.1"></script>
+    <script src="/static/app.js?v=1.2"></script>
 </body>
 </html>
