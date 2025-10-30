@@ -45,6 +45,40 @@ func getVideoDimensions(videoPath string) (*videoDimensions, error) {
 	return &data.Streams[0], nil
 }
 
+func getVideoFrameRate(videoPath string) (float64, error) {
+	cmd := exec.Command("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=r_frame_rate", "-of", "default=noprint_wrappers=1:nokey=1", videoPath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return 0, fmt.Errorf("ffprobe error getting frame rate: %s\n%s", err, output)
+	}
+
+	trimmedOutput := strings.TrimSpace(string(output))
+	parts := strings.Split(trimmedOutput, "/")
+	if len(parts) == 1 {
+		rate, err := strconv.ParseFloat(trimmedOutput, 64)
+		if err != nil {
+			return 0, fmt.Errorf("could not parse frame rate: %s", trimmedOutput)
+		}
+		return rate, nil
+	}
+	if len(parts) == 2 {
+		num, err := strconv.ParseFloat(parts[0], 64)
+		if err != nil {
+			return 0, err
+		}
+		den, err := strconv.ParseFloat(parts[1], 64)
+		if err != nil {
+			return 0, err
+		}
+		if den == 0 {
+			return 0, fmt.Errorf("invalid frame rate denominator")
+		}
+		return num / den, nil
+	}
+
+	return 0, fmt.Errorf("unexpected frame rate format: %s", trimmedOutput)
+}
+
 // TranscriptSegment represents a single segment of the video transcript.
 type TranscriptSegment struct {
 	Start float64 `json:"start"`
@@ -203,113 +237,173 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cropWidth := dims.Height * 9 / 16
-	var cropX int
 
 	if cropXStr != "" {
+		// Manual crop logic
 		manualCropX, err := strconv.Atoi(cropXStr)
 		if err != nil {
 			http.Error(w, "Invalid cropX value", http.StatusBadRequest)
 			return
 		}
-		cropX = manualCropX - (cropWidth / 2)
+		cropX := manualCropX - (cropWidth / 2)
+		if cropX < 0 {
+			cropX = 0
+		}
+		if cropX+cropWidth > dims.Width {
+			cropX = dims.Width - cropWidth
+		}
+
+		subtitlePath := filepath.ToSlash(filepath.Join("uploads", strings.TrimSuffix(videoFile, filepath.Ext(videoFile))+".vtt"))
+		vf_string := fmt.Sprintf("crop=%d:%d:%d:0,scale=1080:1920,setsar=1,subtitles=%s:force_style='Alignment=2\\,FontName=Arial\\,FontSize=18\\,PrimaryColour=&Hffffff\\,BackColor=&H80000000\\,BorderStyle=1\\,Outline=1\\,Shadow=0\\,MarginV=50'", cropWidth, dims.Height, cropX, strings.ReplaceAll(subtitlePath, "\\", "/"))
+		cmd := exec.Command("ffmpeg", "-y", "-ss", start, "-to", end, "-i", filepath.Join("uploads", videoFile), "-vf", vf_string, "-c:a", "aac", "-af", "loudnorm", clipPath)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			log.Printf("ffmpeg error: %s\n%s", err, output)
+			http.Error(w, fmt.Sprintf("Failed to create clip: %s", output), http.StatusInternalServerError)
+			return
+		}
 	} else {
-		// Fallback to face detection
-		frameDir := filepath.Join("uploads", "first_frame")
+		// Face tracking logic
+		frameDir := filepath.Join("uploads", strings.TrimSuffix(clipFile, filepath.Ext(videoFile))+"_frames")
 		if err := os.MkdirAll(frameDir, os.ModePerm); err != nil {
 			http.Error(w, "Failed to create frame directory", http.StatusInternalServerError)
 			return
 		}
 		defer os.RemoveAll(frameDir)
 
-		firstFramePath := filepath.Join(frameDir, "first_frame.png")
-		cmdFrame := exec.Command("ffmpeg", "-y", "-i", filepath.Join("uploads", videoFile), "-ss", start, "-vframes", "1", firstFramePath)
+		framePattern := filepath.Join(frameDir, "frame-%04d.png")
+		cmdFrame := exec.Command("ffmpeg", "-y", "-ss", start, "-to", end, "-i", filepath.Join("uploads", videoFile), framePattern)
 		output, err := cmdFrame.CombinedOutput()
 		if err != nil {
-			log.Printf("ffmpeg error extracting first frame: %s\n%s", err, output)
-			http.Error(w, fmt.Sprintf("Failed to extract first frame: %s", output), http.StatusInternalServerError)
+			log.Printf("ffmpeg error extracting frames: %s\n%s", err, output)
+			http.Error(w, fmt.Sprintf("Failed to extract frames: %s", output), http.StatusInternalServerError)
 			return
 		}
 
-		cascadeFile, err := os.ReadFile(filepath.Join("cascade", "facefinder"))
+		files, err := os.ReadDir(frameDir)
 		if err != nil {
-			// Handle cascade file download as before
-			url := "https://github.com/esimov/pigo/raw/master/cascade/facefinder"
-			resp, err := http.Get(url)
-			if err != nil {
-				log.Printf("Failed to download cascade file: %s", err)
-				http.Error(w, "Failed to download cascade file", http.StatusInternalServerError)
-				return
-			}
-			defer resp.Body.Close()
-			out, err := os.Create(filepath.Join("cascade", "facefinder"))
-			if err != nil {
-				log.Printf("Failed to create cascade file: %s", err)
-				http.Error(w, "Failed to create cascade file", http.StatusInternalServerError)
-				return
-			}
-			defer out.Close()
-			_, err = io.Copy(out, resp.Body)
-			if err != nil {
-				log.Printf("Failed to save cascade file: %s", err)
-				http.Error(w, "Failed to save cascade file", http.StatusInternalServerError)
-				return
-			}
-			cascadeFile, err = os.ReadFile(filepath.Join("cascade", "facefinder"))
-			if err != nil {
-				log.Printf("Failed to read cascade file after download: %s", err)
-				http.Error(w, "Failed to read cascade file", http.StatusInternalServerError)
-				return
-			}
+			log.Printf("Failed to read frame directory: %s", err)
+			http.Error(w, "Failed to read frame directory", http.StatusInternalServerError)
+			return
 		}
 
 		p := pigo.NewPigo()
+		cascadeFile, err := os.ReadFile(filepath.Join("cascade", "facefinder"))
+		if err != nil {
+			log.Printf("Failed to read cascade file: %s", err)
+			http.Error(w, "Failed to read cascade file", http.StatusInternalServerError)
+			return
+		}
 		classifier, err := p.Unpack(cascadeFile)
 		if err != nil {
-			log.Fatalf("Error reading the cascade file: %s", err)
+			log.Printf("Error unpacking cascade file: %s", err)
+			http.Error(w, "Error unpacking cascade file", http.StatusInternalServerError)
+			return
 		}
 
-		src, err := pigo.GetImage(filepath.ToSlash(firstFramePath))
+		type FaceDetection struct {
+			Frame int
+			X     int
+		}
+		var faceDetections []FaceDetection
+		for _, file := range files {
+			if !file.IsDir() && strings.HasSuffix(file.Name(), ".png") {
+				framePath := filepath.Join(frameDir, file.Name())
+				// Extract frame number from filename
+				parts := strings.Split(file.Name(), "-")
+				if len(parts) != 2 {
+					continue
+				}
+				frameNumStr := strings.TrimSuffix(parts[1], ".png")
+				frameNum, err := strconv.Atoi(frameNumStr)
+				if err != nil {
+					continue
+				}
+
+				src, err := pigo.GetImage(filepath.ToSlash(framePath))
+				if err != nil {
+					log.Printf("Cannot open image file %s: %v", framePath, err)
+					continue
+				}
+				pixels := pigo.RgbToGrayscale(src)
+				cols, rows := src.Bounds().Max.X, src.Bounds().Max.Y
+				cParams := pigo.CascadeParams{
+					MinSize:     20,
+					MaxSize:     1000,
+					ShiftFactor: 0.1,
+					ScaleFactor: 1.1,
+					ImageParams: pigo.ImageParams{Pixels: pixels, Rows: rows, Cols: cols, Dim: cols},
+				}
+				detections := classifier.RunCascade(cParams, 0.0)
+				detections = classifier.ClusterDetections(detections, 0.2)
+				if len(detections) > 0 {
+					faceDetections = append(faceDetections, FaceDetection{Frame: frameNum, X: detections[0].Col})
+				}
+			}
+		}
+
+		type CropKeyframe struct {
+			Frame int
+			CropX int
+		}
+		var keyframes []CropKeyframe
+		safeZoneThreshold := int(float64(cropWidth) * 0.15)
+
+		if len(faceDetections) > 0 {
+			currentCropX := faceDetections[0].X - (cropWidth / 2)
+			keyframes = append(keyframes, CropKeyframe{Frame: faceDetections[0].Frame, CropX: currentCropX})
+
+			for _, detection := range faceDetections {
+				cropCenterX := currentCropX + (cropWidth / 2)
+				delta := detection.X - cropCenterX
+
+				if delta > safeZoneThreshold || delta < -safeZoneThreshold {
+					newCropX := detection.X - (cropWidth / 2)
+					keyframes = append(keyframes, CropKeyframe{Frame: detection.Frame, CropX: newCropX})
+					currentCropX = newCropX
+				}
+			}
+		}
+
+		log.Printf("Calculated keyframes: %+v", keyframes)
+
+		frameRate, err := getVideoFrameRate(filepath.Join("uploads", videoFile))
 		if err != nil {
-			log.Printf("Cannot open the image file: %v", err)
-			cropX = (dims.Width - cropWidth) / 2 // Default to center
-		} else {
-			pixels := pigo.RgbToGrayscale(src)
-			cols, rows := src.Bounds().Max.X, src.Bounds().Max.Y
-			cParams := pigo.CascadeParams{
-				MinSize:     20,
-				MaxSize:     1000,
-				ShiftFactor: 0.1,
-				ScaleFactor: 1.1,
-				ImageParams: pigo.ImageParams{Pixels: pixels, Rows: rows, Cols: cols, Dim: cols},
-			}
-			detections := classifier.RunCascade(cParams, 0.0)
-			detections = classifier.ClusterDetections(detections, 0.2)
-
-			if len(detections) > 0 {
-				faceX := detections[0].Col
-				cropX = faceX - (cropWidth / 2)
-			} else {
-				cropX = (dims.Width - cropWidth) / 2 // Default to center
-			}
+			log.Printf("Failed to get frame rate: %s", err)
+			http.Error(w, "Failed to get frame rate", http.StatusInternalServerError)
+			return
 		}
-	}
 
-	// Clamp cropX to ensure it's within video bounds
-	if cropX < 0 {
-		cropX = 0
-	}
-	if cropX+cropWidth > dims.Width {
-		cropX = dims.Width - cropWidth
-	}
+		var zoompanExpressions []string
+		for i := 0; i < len(keyframes)-1; i++ {
+			startFrame := keyframes[i].Frame
+			endFrame := keyframes[i+1].Frame
+			startX := keyframes[i].CropX
+			endX := keyframes[i+1].CropX
+			expr := fmt.Sprintf("if(between(in_frame,%d,%d),lerp(%d,%d,(in_frame-%d)/(%d-%d)),", startFrame, endFrame, startX, endX, startFrame, endFrame, startFrame)
+			zoompanExpressions = append(zoompanExpressions, expr)
+		}
 
-	subtitlePath := filepath.ToSlash(filepath.Join("uploads", strings.TrimSuffix(videoFile, filepath.Ext(videoFile))+".vtt"))
-	vf_string := fmt.Sprintf("crop=%d:%d:%d:0,scale=1080:1920,setsar=1,subtitles=%s:force_style='Alignment=2\\,FontName=Arial\\,FontSize=18\\,PrimaryColour=&Hffffff\\,BackColor=&H80000000\\,BorderStyle=1\\,Outline=1\\,Shadow=0\\,MarginV=50'", cropWidth, dims.Height, cropX, strings.ReplaceAll(subtitlePath, "\\", "/"))
-	cmd := exec.Command("ffmpeg", "-y", "-i", filepath.Join("uploads", videoFile), "-vf", vf_string, "-c:a", "aac", "-af", "loudnorm", "-ss", start, "-to", end, clipPath)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		log.Printf("ffmpeg error: %s\n%s", err, output)
-		http.Error(w, fmt.Sprintf("Failed to create clip: %s", output), http.StatusInternalServerError)
-		return
+		var xExpr string
+		if len(zoompanExpressions) > 0 {
+			xExpr = strings.Join(zoompanExpressions, "") + fmt.Sprintf("%d", keyframes[len(keyframes)-1].CropX) + strings.Repeat(")", len(zoompanExpressions))
+		} else if len(keyframes) == 1 {
+			xExpr = fmt.Sprintf("%d", keyframes[0].CropX)
+		} else {
+			xExpr = fmt.Sprintf("%d", (dims.Width-cropWidth)/2)
+		}
+
+		zoompanFilter := fmt.Sprintf("zoompan=z=1:x='%s':y=0:d=1:s=%dx%d:fps=%f", xExpr, cropWidth, dims.Height, frameRate)
+
+		subtitlePath := filepath.ToSlash(filepath.Join("uploads", strings.TrimSuffix(videoFile, filepath.Ext(videoFile))+".vtt"))
+		vf_string := fmt.Sprintf("%s,scale=1080:1920,setsar=1,subtitles=%s:force_style='Alignment=2\\,FontName=Arial\\,FontSize=18\\,PrimaryColour=&Hffffff\\,BackColor=&H80000000\\,BorderStyle=1\\,Outline=1\\,Shadow=0\\,MarginV=50'", zoompanFilter, strings.ReplaceAll(subtitlePath, "\\", "/"))
+		cmd := exec.Command("ffmpeg", "-y", "-ss", start, "-to", end, "-i", filepath.Join("uploads", videoFile), "-vf", vf_string, "-c:a", "aac", "-af", "loudnorm", clipPath)
+		output, err = cmd.CombinedOutput()
+		if err != nil {
+			log.Printf("ffmpeg error: %s\n%s", err, output)
+			http.Error(w, fmt.Sprintf("Failed to create clip: %s", output), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	fmt.Fprintf(w, "/static/%s", clipFile)
