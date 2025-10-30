@@ -79,6 +79,39 @@ func getVideoFrameRate(videoPath string) (float64, error) {
 	return 0, fmt.Errorf("unexpected frame rate format: %s", trimmedOutput)
 }
 
+type FaceDetection struct {
+	Frame int
+	X     int
+}
+
+func smoothFaceDetections(detections []FaceDetection, windowSize int) []FaceDetection {
+	if windowSize <= 1 {
+		return detections
+	}
+
+	var smoothedDetections []FaceDetection
+	for i := range detections {
+		start := i - windowSize/2
+		if start < 0 {
+			start = 0
+		}
+		end := i + windowSize/2
+		if end >= len(detections) {
+			end = len(detections) - 1
+		}
+
+		sum := 0
+		count := 0
+		for j := start; j <= end; j++ {
+			sum += detections[j].X
+			count++
+		}
+		smoothedX := sum / count
+		smoothedDetections = append(smoothedDetections, FaceDetection{Frame: detections[i].Frame, X: smoothedX})
+	}
+	return smoothedDetections
+}
+
 // TranscriptSegment represents a single segment of the video transcript.
 type TranscriptSegment struct {
 	Start float64 `json:"start"`
@@ -301,10 +334,6 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		type FaceDetection struct {
-			Frame int
-			X     int
-		}
 		var faceDetections []FaceDetection
 		for _, file := range files {
 			if !file.IsDir() && strings.HasSuffix(file.Name(), ".png") {
@@ -342,6 +371,9 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// Smooth face detections
+		smoothedDetections := smoothFaceDetections(faceDetections, 15)
+
 		type CropKeyframe struct {
 			Frame int
 			CropX int
@@ -349,11 +381,11 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		var keyframes []CropKeyframe
 		safeZoneThreshold := int(float64(cropWidth) * 0.15)
 
-		if len(faceDetections) > 0 {
-			currentCropX := faceDetections[0].X - (cropWidth / 2)
-			keyframes = append(keyframes, CropKeyframe{Frame: faceDetections[0].Frame, CropX: currentCropX})
+		if len(smoothedDetections) > 0 {
+			currentCropX := smoothedDetections[0].X - (cropWidth / 2)
+			keyframes = append(keyframes, CropKeyframe{Frame: smoothedDetections[0].Frame, CropX: currentCropX})
 
-			for _, detection := range faceDetections {
+			for _, detection := range smoothedDetections {
 				cropCenterX := currentCropX + (cropWidth / 2)
 				delta := detection.X - cropCenterX
 
