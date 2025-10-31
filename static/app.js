@@ -111,7 +111,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         keyframes.sort((a, b) => a.time - b.time);
         updateKeyframesDisplay();
-        manualClipButton.disabled = keyframes.length === 0;
     });
 
     function updateKeyframesDisplay() {
@@ -126,7 +125,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 removeBtn.onclick = () => {
                     keyframes.splice(index, 1);
                     updateKeyframesDisplay();
-                    manualClipButton.disabled = keyframes.length === 0;
                 };
                 li.appendChild(removeBtn);
                 ol.appendChild(li);
@@ -135,6 +133,7 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
             keyframesDisplay.innerHTML += '<p>Click on the video at different times to set crop keyframes.</p>';
         }
+        manualClipButton.disabled = keyframes.length === 0;
     }
 
     // --- Clip Generation ---
