@@ -330,9 +330,31 @@ func autoClipHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	subtitlePath := filepath.ToSlash(filepath.Join("uploads", strings.TrimSuffix(videoFile, filepath.Ext(videoFile))+".vtt"))
+	baseName := strings.TrimSuffix(videoFile, filepath.Ext(videoFile))
+	vttPath := filepath.Join("uploads", baseName+".vtt")
+	assPath := filepath.Join("uploads", baseName+".ass")
+
+	// Convert VTT to ASS for better styling
+	if transcript, err := parseVTT(vttPath); err == nil {
+		assContent := generateAssFromTranscript(transcript)
+		if err := os.WriteFile(assPath, []byte(assContent), 0644); err != nil {
+			log.Printf("Failed to write ASS file: %s", err)
+		}
+	}
+
+	subtitlePath := filepath.ToSlash(assPath)
+	// Fallback to VTT if ASS doesn't exist
+	if _, err := os.Stat(assPath); os.IsNotExist(err) {
+		subtitlePath = filepath.ToSlash(vttPath)
+	}
+
 	// Use the dynamic crop expression
-	vf_string := fmt.Sprintf("crop=%d:%d:%s:0,scale=1080:1920,setsar=1,subtitles=%s:force_style='Alignment=2\\,FontName=Arial\\,FontSize=18\\,PrimaryColour=&Hffffff\\,BackColor=&H80000000\\,BorderStyle=1\\,Outline=1\\,Shadow=0\\,MarginV=50'", cropWidth, dims.Height, cropExpr, strings.ReplaceAll(subtitlePath, "\\", "/"))
+	var vf_string string
+	if strings.HasSuffix(subtitlePath, ".ass") {
+		vf_string = fmt.Sprintf("crop=%d:%d:%s:0,scale=1080:1920,setsar=1,subtitles=%s", cropWidth, dims.Height, cropExpr, strings.ReplaceAll(subtitlePath, "\\", "/"))
+	} else {
+		vf_string = fmt.Sprintf("crop=%d:%d:%s:0,scale=1080:1920,setsar=1,subtitles=%s:force_style='Alignment=2\\,FontName=Arial\\,FontSize=18\\,PrimaryColour=&Hffffff\\,BackColor=&H80000000\\,BorderStyle=1\\,Outline=1\\,Shadow=0\\,MarginV=50'", cropWidth, dims.Height, cropExpr, strings.ReplaceAll(subtitlePath, "\\", "/"))
+	}
 
 	// Write filter to temporary file to avoid command line length limits
 	filterFile, err := os.CreateTemp("", "filter_*.txt")
@@ -488,8 +510,30 @@ func manualClipHandler(w http.ResponseWriter, r *http.Request) {
 
 	clipFile := fmt.Sprintf("manualclip-%s-%s-%s", start, end, videoFile)
 	clipPath := filepath.Join("static", clipFile)
-	subtitlePath := filepath.ToSlash(filepath.Join("uploads", strings.TrimSuffix(videoFile, filepath.Ext(videoFile))+".vtt"))
-	vf_string := fmt.Sprintf("%s,scale=1080:1920,setsar=1,subtitles=%s:force_style='Alignment=2\\,FontName=Arial\\,FontSize=18\\,PrimaryColour=&Hffffff\\,BackColor=&H80000000\\,BorderStyle=1\\,Outline=1\\,Shadow=0\\,MarginV=50'", zoompanFilter, strings.ReplaceAll(subtitlePath, "\\", "/"))
+
+	baseName := strings.TrimSuffix(videoFile, filepath.Ext(videoFile))
+	vttPath := filepath.Join("uploads", baseName+".vtt")
+	assPath := filepath.Join("uploads", baseName+".ass")
+
+	// Convert VTT to ASS for better styling
+	if transcript, err := parseVTT(vttPath); err == nil {
+		assContent := generateAssFromTranscript(transcript)
+		if err := os.WriteFile(assPath, []byte(assContent), 0644); err != nil {
+			log.Printf("Failed to write ASS file: %s", err)
+		}
+	}
+
+	subtitlePath := filepath.ToSlash(assPath)
+	if _, err := os.Stat(assPath); os.IsNotExist(err) {
+		subtitlePath = filepath.ToSlash(vttPath)
+	}
+
+	var vf_string string
+	if strings.HasSuffix(subtitlePath, ".ass") {
+		vf_string = fmt.Sprintf("%s,scale=1080:1920,setsar=1,subtitles=%s", zoompanFilter, strings.ReplaceAll(subtitlePath, "\\", "/"))
+	} else {
+		vf_string = fmt.Sprintf("%s,scale=1080:1920,setsar=1,subtitles=%s:force_style='Alignment=2\\,FontName=Arial\\,FontSize=18\\,PrimaryColour=&Hffffff\\,BackColor=&H80000000\\,BorderStyle=1\\,Outline=1\\,Shadow=0\\,MarginV=50'", zoompanFilter, strings.ReplaceAll(subtitlePath, "\\", "/"))
+	}
 
 	log.Printf("Running ffmpeg with vf: %s", vf_string)
 	cmd := exec.Command("ffmpeg", "-y", "-threads", "0", "-ss", start, "-to", end, "-i", filepath.Join("uploads", videoFile), "-vf", vf_string, "-c:a", "aac", "-af", "loudnorm", clipPath)
@@ -512,7 +556,12 @@ func manualClipHandler(w http.ResponseWriter, r *http.Request) {
 			} else {
 				fallbackX = (dims.Width - cropWidth) / 2
 			}
-			vfFallback := fmt.Sprintf("crop=%d:%d:%d:0,scale=1080:1920,setsar=1,subtitles=%s:force_style='Alignment=2\\,FontName=Arial\\,FontSize=18\\,PrimaryColour=&Hffffff\\,BackColor=&H80000000\\,BorderStyle=1\\,Outline=1\\,Shadow=0\\,MarginV=50'", cropWidth, dims.Height, fallbackX, strings.ReplaceAll(subtitlePath, "\\", "/"))
+			var vfFallback string
+			if strings.HasSuffix(subtitlePath, ".ass") {
+				vfFallback = fmt.Sprintf("crop=%d:%d:%d:0,scale=1080:1920,setsar=1,subtitles=%s", cropWidth, dims.Height, fallbackX, strings.ReplaceAll(subtitlePath, "\\", "/"))
+			} else {
+				vfFallback = fmt.Sprintf("crop=%d:%d:%d:0,scale=1080:1920,setsar=1,subtitles=%s:force_style='Alignment=2\\,FontName=Arial\\,FontSize=18\\,PrimaryColour=&Hffffff\\,BackColor=&H80000000\\,BorderStyle=1\\,Outline=1\\,Shadow=0\\,MarginV=50'", cropWidth, dims.Height, fallbackX, strings.ReplaceAll(subtitlePath, "\\", "/"))
+			}
 			log.Printf("Running ffmpeg fallback with vf: %s", vfFallback)
 			cmd2 := exec.Command("ffmpeg", "-y", "-threads", "0", "-ss", start, "-to", end, "-i", filepath.Join("uploads", videoFile), "-vf", vfFallback, "-c:a", "aac", "-af", "loudnorm", clipPath)
 			output2, err2 := cmd2.CombinedOutput()
